@@ -9,6 +9,7 @@
 ![Storage: S3 via rclone](https://img.shields.io/badge/storage-S3%20via%20rclone-2f81f7)
 ![Deploy: Kamal](https://img.shields.io/badge/deploy-Kamal-e5483b)
 ![Tests: bash + Docker](https://img.shields.io/badge/tests-bash%20%2B%20Docker-2ea44f)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 <!-- Once the repository is published, add the CI badge:
 ![CI](https://github.com/OWNER/REPO/actions/workflows/image.yml/badge.svg) -->
@@ -188,3 +189,7 @@ Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md): how to run
 ## 🔒 Security
 
 See [`SECURITY.md`](SECURITY.md) to report a vulnerability without exposing it publicly.
+
+## 📄 License
+
+[MIT](LICENSE).
