@@ -24,6 +24,8 @@ docker build -q -t pgdump-age:test . >/dev/null
 "${COMPOSE[@]}" up -d --wait >/dev/null
 
 docker run --rm --entrypoint age-keygen pgdump-age:test 2>/dev/null >"$KEY"
+# mktemp cree en 0600 : le conteneur (uid 10001) ne lit pas la cle sur un runner Linux (uid different).
+chmod 644 "$KEY"
 PUB=$(sed -n 's/^# public key: //p' "$KEY")
 [[ $PUB == age1* ]] || die "cle age non generee"
 
