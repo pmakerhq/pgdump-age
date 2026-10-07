@@ -13,6 +13,9 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 - `bin/pg-backup` : tout le comportement (`schedule`, `once`, `list`, `get`). Copié dans l'image.
 - `Dockerfile` : Alpine 3.23, `postgresql18-client`, `age`, `rclone`, `bash`, `tini`, utilisateur non root.
 - `test/run.sh`, `test/compose.yml`, `test/init.sql` : test de bout en bout (Docker requis).
+- `examples/kamal/` : bloc d'accessory Kamal, lignes de secrets, SQL du rôle. Validés en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces fichiers changent.
+- `.github/workflows/image.yml` : tests sur pull request, publication sur ghcr.io à chaque tag `v*`. Jamais exécuté.
+- `CONTRIBUTING.md`, `SECURITY.md` : à garder cohérents avec ce fichier (invariants, refus volontaires).
 
 ## Tester
 
@@ -36,7 +39,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 ## Conventions
 
 - Messages du script sans accents (`log`, `warn`, `fail`), préfixe `INFO`/`WARN`/`ERROR` : c'est ce que le monitoring recherchera. README et commentaires de test en français accentué.
-- Pas d'emojis, pas de tirets cadratins.
+- Pas d'emojis ni de tirets cadratins dans le code, les logs et ce fichier. Le README en utilise (choix assumé pour un README communautaire) : ne pas les retirer.
 - Commits : conventional commits, atomiques, message en français.
 - Ne pas ajouter de dépendance (paquet Alpine, outil) pour quelques lignes de bash.
 - Toute nouvelle variable d'environnement : la documenter dans le tableau du README et valider sa valeur dans `setup`.

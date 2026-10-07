@@ -1,0 +1,35 @@
+name: Image
+
+# Pull request : tests de bout en bout. Tag vX.Y.Z : tests puis publication sur ghcr.io.
+on:
+  pull_request:
+    paths: [Dockerfile, bin/**, test/**, .github/workflows/image.yml]
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash test/run.sh
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build et push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -t "$image:$GITHUB_REF_NAME" .
+          docker push "$image:$GITHUB_REF_NAME"
+          echo "Image publiee : \`$(docker inspect --format='{{index .RepoDigests 0}}' "$image:$GITHUB_REF_NAME")\`" >> "$GITHUB_STEP_SUMMARY"

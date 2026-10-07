@@ -1,0 +1,41 @@
+# Accessory Kamal pour pg-backup.
+#
+# A fusionner dans config/deploy.yml (ou config/deploy.<destination>.yml), sous `accessories:`.
+# Remplacer OWNER/REPO et le tag par ceux de votre image publiee (voir README, "Publier l'image").
+# Tout ce qui est en MAJUSCULES entre guillemets ci-dessous est un exemple a adapter.
+accessories:
+  pg_backup:
+    # Epingler une version, jamais `latest` ; ajouter le digest (@sha256:...) pour un deploiement
+    # reproductible. Le workflow image.yml affiche le digest dans le resume du run.
+    image: ghcr.io/OWNER/REPO:v0.1.0
+
+    # Hote qui atteint Postgres en direct (pas via PgBouncer : un pg_dump ne doit pas passer par
+    # un pooler en mode transaction). Peut etre l'hote de la base elle-meme.
+    host: 10.0.0.10
+
+    env:
+      clear:
+        PGHOST: 10.0.0.10
+        PGPORT: "5432"
+        PGUSER: backup
+        PGDATABASE: myapp_production
+        # Cle PUBLIQUE age (age1...) : ce n'est pas un secret. La cle privee reste hors serveur.
+        AGE_RECIPIENT: age1replacewithyourpublickeyfromagekeygen000000000000000000000000
+        S3_ENDPOINT: https://s3.sbg.io.cloud.ovh.net
+        S3_REGION: sbg
+        S3_BUCKET: myapp-backups
+        # S3_PREFIX: postgres        # sous-dossier optionnel
+        # S3_PROVIDER: OVHcloud      # existe dans rclone 1.72, jamais essaye ici
+        KEEP: "3"
+        BACKUP_AT: "03:30"           # HH:MM UTC
+      # Noms dans le conteneur a gauche, noms dans .kamal/secrets a droite (alias Kamal 2).
+      secret:
+        - PGPASSWORD:BACKUP_DB_PASSWORD
+        - S3_ACCESS_KEY_ID:BACKUP_S3_ACCESS_KEY_ID
+        - S3_SECRET_ACCESS_KEY:BACKUP_S3_SECRET_ACCESS_KEY
+
+    # Memes garde-fous que les tests : aucun fichier de dump ne peut etre ecrit sur disque.
+    options:
+      read-only: true
+      tmpfs: /tmp:size=8m
+      cpus: "1"
