@@ -7,7 +7,7 @@ accessories:
   pg_backup:
     # Epingler une version, jamais `latest` ; ajouter le digest (@sha256:...) pour un deploiement
     # reproductible. Le workflow image.yml affiche le digest dans le resume du run.
-    image: ghcr.io/pmakerhq/pgdump-age:v0.1.0
+    image: ghcr.io/pmakerhq/pgdump-age:v0.1.1
 
     # Hote qui atteint Postgres en direct (pas via PgBouncer : un pg_dump ne doit pas passer par
     # un pooler en mode transaction). Peut etre l'hote de la base elle-meme.
