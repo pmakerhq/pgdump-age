@@ -15,6 +15,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 - `test/run.sh`, `test/compose.yml`, `test/init.sql` : test de bout en bout (Docker requis).
 - `examples/kamal/` : bloc d'accessory Kamal, lignes de secrets, SQL du rôle. Validés en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces fichiers changent.
 - `.github/workflows/image.yml` : tests sur pull request, publication sur ghcr.io à chaque tag `v*`. Jamais exécuté.
+- `.claude/skills/release/SKILL.md` : skill `/release`, crée et pousse le tag `vX.Y.Z` qui déclenche la publication. À garder cohérent avec `image.yml` (format du tag).
 - `CONTRIBUTING.md`, `SECURITY.md` : à garder cohérents avec ce fichier (invariants, refus volontaires).
 
 ## Tester

@@ -58,7 +58,7 @@ age-keygen -o private-key.txt     # prints the public key age1...
 
 **2. Create a read-only role**: see [`examples/kamal/setup.sql`](examples/kamal/setup.sql).
 
-**3. Build the image and run a first dump:**
+**3. Get the image (or `docker build -t pgdump-age .`) and run a first dump:**
 
 ```sh
 docker build -t pgdump-age .
@@ -103,7 +103,15 @@ The example was validated by rendering the real `docker run` command with Kamal 
 
 ### 📦 Publishing the image
 
-A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.yml): end-to-end tests, then publication to `ghcr.io/pmakerhq/pgdump-age`. The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.0@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
+A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.yml): end-to-end tests, then publication to `ghcr.io/pmakerhq/pgdump-age:vX.Y.Z` (OCI labels `source`, `version`, `revision` included). There is no `latest` tag: pin a version.
+
+```sh
+docker pull ghcr.io/pmakerhq/pgdump-age:v0.1.0
+```
+
+The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.0@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
+
+To cut a release, run the `/release` skill in Claude Code ([`.claude/skills/release/SKILL.md`](.claude/skills/release/SKILL.md)). It checks that `main` is clean and pushed, proposes the next version from the conventional commits, asks for confirmation, then creates and pushes the annotated tag. Without Claude: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z` from an up-to-date `main`.
 
 ## ⚙️ Configuration
 

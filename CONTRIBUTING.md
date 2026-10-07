@@ -24,6 +24,10 @@ Every case must pass. CI runs the same command.
 - **Script messages** (`log`, `warn`, `fail`): in French without accents, prefixed `INFO`, `WARN` or `ERROR`, because monitoring searches for them. Do not translate them: alerts may depend on the exact text.
 - No new dependency for a few lines of bash.
 
+## Releasing
+
+Maintainers only. Run the `/release` skill ([`.claude/skills/release/SKILL.md`](.claude/skills/release/SKILL.md)): it tags `main` as `vX.Y.Z` and pushes the tag, which triggers the image build and publication on ghcr.io. Never move or delete a pushed tag: publish a new patch.
+
 ## What the project deliberately refuses
 
 - Writing the dump to disk, even temporarily.
