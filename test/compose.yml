@@ -12,6 +12,6 @@ services:
       retries: 30
 
   s3:
-    image: adobe/s3mock:latest
+    image: adobe/s3mock:5.2.3
     environment:
       COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: backups

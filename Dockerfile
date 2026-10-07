@@ -7,5 +7,7 @@ RUN apk add --no-cache bash tini age rclone postgresql18-client \
 COPY bin/pg-backup /usr/local/bin/pg-backup
 
 USER backup
-ENTRYPOINT ["/sbin/tini", "--", "pg-backup"]
+# -g : SIGTERM va a tout le groupe (pg_dump, age, rclone), pas seulement a bash, sinon docker stop
+# attend 10 s puis tue le conteneur en plein upload.
+ENTRYPOINT ["/sbin/tini", "-g", "--", "pg-backup"]
 CMD ["schedule"]
