@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# pg-backup : pg_dump (format custom, compresse) -> age -> un seul objet S3, sans fichier local.
+#
+# Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest>
+set -euo pipefail
+
+log()  { printf '%s INFO  %s\n' "$(date -u +%FT%TZ)" "$*"; }
+warn() { printf '%s WARN  %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+fail() { printf '%s ERROR %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+
+need() {
+  local v
+  for v in "$@"; do
+    if [[ -z "${!v:-}" ]]; then fail "variable $v manquante"; exit 2; fi
+  done
+}
+
+setup() {
+  need PGHOST PGUSER PGPASSWORD PGDATABASE AGE_RECIPIENT \
+       S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
+  KEEP=${KEEP:-3}
+  PG_COMPRESS=${PG_COMPRESS:-zstd:5}
+
+  [[ $PGDATABASE =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASE: seuls [A-Za-z0-9_-] sont acceptes"; exit 2; }
+  [[ $KEEP =~ ^[1-9][0-9]*$ ]]           || { fail "KEEP doit etre un entier >= 1"; exit 2; }
+  [[ $AGE_RECIPIENT == age1* ]]          || { fail "AGE_RECIPIENT doit etre une cle publique age (age1...)"; exit 2; }
+
+  # Remote rclone "DEST" configure par l'environnement : aucun fichier de config.
+  export RCLONE_CONFIG=/dev/null
+  export RCLONE_CONFIG_DEST_TYPE=s3
+  export RCLONE_CONFIG_DEST_PROVIDER=Other
+  export RCLONE_CONFIG_DEST_ENDPOINT="$S3_ENDPOINT"
+  export RCLONE_CONFIG_DEST_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID"
+  export RCLONE_CONFIG_DEST_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY"
+  export RCLONE_CONFIG_DEST_NO_CHECK_BUCKET=true
+  [[ -z "${S3_REGION:-}" ]] || export RCLONE_CONFIG_DEST_REGION="$S3_REGION"
+  # Le flux a une taille inconnue : parts de 32 Mio x 2 en memoire, plafond ~312 Gio par objet.
+  export RCLONE_S3_CHUNK_SIZE=${RCLONE_S3_CHUNK_SIZE:-32M}
+  export RCLONE_S3_UPLOAD_CONCURRENCY=${RCLONE_S3_UPLOAD_CONCURRENCY:-2}
+
+  local prefix=${S3_PREFIX:-}
+  prefix=${prefix#/}; prefix=${prefix%/}
+  DEST="DEST:${S3_BUCKET}${prefix:+/$prefix}"
+}
+
+# Liste triee (la plus recente d'abord) des dumps finalises de la base, hors objets .partial.
+list_dumps() {
+  { rclone lsf --files-only "$DEST" | grep -E "^${PGDATABASE}-[0-9]{8}T[0-9]{6}Z\.dump\.age$" || true; } | sort -r
+}
+
+prune() {
+  local old f
+  mapfile -t old < <(list_dumps | tail -n +"$((KEEP + 1))")
+  for f in "${old[@]}"; do
+    [[ -n $f ]] || continue
+    if rclone deletefile "$DEST/$f"; then log "supprime : $f"; else warn "suppression impossible : $f"; fi
+  done
+}
+
+backup_once() {
+  local stamp name partial size
+  local -a status
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  name="${PGDATABASE}-${stamp}.dump.age"
+  partial="${name}.partial"
+
+  # Partiels d'un run interrompu (> 1 jour, pour ne pas toucher un upload en cours).
+  rclone delete "$DEST" --include '*.partial' --min-age 1d || warn "nettoyage des partiels impossible"
+
+  log "dump de ${PGDATABASE}@${PGHOST} vers ${DEST}/${name}"
+  # Le dump part vers un objet .partial : S'il echoue en route, age et rclone terminent
+  # normalement le flux tronque, d'ou le controle de TOUS les statuts avant de le publier.
+  set +e
+  pg_dump --format=custom --compress="$PG_COMPRESS" --no-password \
+    | age --recipient "$AGE_RECIPIENT" \
+    | rclone rcat "${DEST}/${partial}"
+  status=("${PIPESTATUS[@]}")
+  set -e
+
+  if [[ "${status[*]}" != "0 0 0" ]]; then
+    fail "echec (pg_dump=${status[0]} age=${status[1]} rclone=${status[2]}) : partiel supprime, dumps existants intacts"
+    rclone deletefile "${DEST}/${partial}" 2>/dev/null || true
+    return 1
+  fi
+
+  size=$(rclone lsf --format s --files-only --include "$partial" "$DEST" | head -n1)
+  if [[ ! $size =~ ^[0-9]+$ || $size -eq 0 ]]; then
+    fail "objet partiel absent ou vide : dumps existants intacts"
+    rclone deletefile "${DEST}/${partial}" 2>/dev/null || true
+    return 1
+  fi
+
+  rclone moveto "${DEST}/${partial}" "${DEST}/${name}"
+  log "termine : ${name} (${size} octets)"
+  prune
+}
+
+# Secondes avant la prochaine occurrence de HH:MM (UTC).
+seconds_until() {
+  local h=${1%:*} m=${1#*:} now target delta
+  now=$((10#$(date -u +%H) * 3600 + 10#$(date -u +%M) * 60 + 10#$(date -u +%S)))
+  target=$((10#$h * 3600 + 10#$m * 60))
+  delta=$((target - now))
+  if (( delta <= 0 )); then delta=$((delta + 86400)); fi
+  echo "$delta"
+}
+
+schedule() {
+  local at=${BACKUP_AT:-03:30} delay
+  [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || { fail "BACKUP_AT invalide (HH:MM UTC)"; exit 2; }
+  trap 'log "arret demande"; exit 0' TERM INT
+  if [[ ${RUN_ON_START:-0} == 1 ]]; then backup_once || true; fi
+  while true; do
+    delay=$(seconds_until "$at")
+    log "prochain backup a ${at} UTC dans ${delay}s"
+    sleep "$delay" & wait $!
+    backup_once || true
+  done
+}
+
+main() {
+  local cmd=${1:-schedule}
+  setup
+  case "$cmd" in
+    schedule) schedule ;;
+    once)     backup_once ;;
+    list)     rclone lsf --format sp --files-only "$DEST" ;;
+    get)
+      local name=${2:?usage: pg-backup get <nom|latest>}
+      if [[ $name == latest ]]; then name=$(list_dumps | head -n1); fi
+      [[ -n $name ]] || { fail "aucun dump"; exit 1; }
+      rclone cat "$DEST/$name"
+      ;;
+    *) fail "commande inconnue : $cmd (schedule|once|list|get)"; exit 2 ;;
+  esac
+}
+
+main "$@"
