@@ -116,7 +116,7 @@ cat >"$WRAP" <<'EOF'
 if [ "$1" = moveto ]; then echo "echec simule de moveto" >&2; exit 1; fi
 exec /usr/bin/rclone "$@"
 EOF
-chmod +x "$WRAP"
+chmod 755 "$WRAP"  # lisible et executable par l'uid 10001 du conteneur
 before=$(run list | grep -v partial | sort)
 build_args
 docker run -d --name pgb-sched --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" -e RUN_ON_START=1 \
