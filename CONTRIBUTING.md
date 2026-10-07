@@ -1,4 +1,4 @@
-# Contributing to pg-backup
+# Contributing to pgdump-age
 
 Thanks for your interest. The project is deliberately small: one script, one image, one end-to-end test.
 
@@ -10,7 +10,7 @@ Thanks for your interest. The project is deliberately small: one script, one ima
 ## Running the tests
 
 ```sh
-bash -n bin/pg-backup test/run.sh   # syntax only
+bash -n bin/pgdump-age test/run.sh   # syntax only
 bash test/run.sh                    # end to end, Docker required, about 2 minutes
 ```
 

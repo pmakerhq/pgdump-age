@@ -20,10 +20,10 @@ trap cleanup EXIT
 ok()  { echo "ok   - $*"; }
 die() { echo "FAIL - $*" >&2; exit 1; }
 
-docker build -q -t pg-backup:test . >/dev/null
+docker build -q -t pgdump-age:test . >/dev/null
 "${COMPOSE[@]}" up -d --wait >/dev/null
 
-docker run --rm --entrypoint age-keygen pg-backup:test 2>/dev/null >"$KEY"
+docker run --rm --entrypoint age-keygen pgdump-age:test 2>/dev/null >"$KEY"
 PUB=$(sed -n 's/^# public key: //p' "$KEY")
 [[ $PUB == age1* ]] || die "cle age non generee"
 
@@ -39,14 +39,14 @@ build_args() {
   if [[ ${#XENV[@]} -gt 0 ]]; then ARGS+=("${XENV[@]}"); fi
 }
 # Conteneur en lecture seule : un fichier de dump ecrit sur disque ferait echouer le test.
-run() { build_args; docker run --rm --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" pg-backup:test "$@"; }
+run() { build_args; docker run --rm --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" pgdump-age:test "$@"; }
 # rclone direct sur le meme bucket (remote T).
 rc() {
   docker run -i --rm --network "$NET" --entrypoint rclone -e RCLONE_CONFIG=/dev/null \
     -e RCLONE_CONFIG_T_TYPE=s3 -e RCLONE_CONFIG_T_PROVIDER=Other -e RCLONE_CONFIG_T_ENDPOINT=http://s3:9090 \
     -e RCLONE_CONFIG_T_REGION=us-east-1 -e RCLONE_CONFIG_T_ACCESS_KEY_ID=test \
     -e RCLONE_CONFIG_T_SECRET_ACCESS_KEY=test-secret -e RCLONE_CONFIG_T_NO_CHECK_BUCKET=true \
-    pg-backup:test "$@"
+    pgdump-age:test "$@"
 }
 multipart_open() { rc backend list-multipart-uploads T:backups 2>/dev/null | grep -c '"Key"' || true; }
 psql_pg() { "${COMPOSE[@]}" exec -T postgres psql -U postgres "$@"; }
@@ -64,7 +64,7 @@ actual=$(run list | cut -d';' -f2 | sort)
 ok "4 runs -> les 3 plus recents gardes, le plus ancien supprime"
 
 # 2. Le dump se restaure hors de l'outil : age + pg_restore standards.
-run get latest | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pg-backup:test -d -i /key \
+run get latest | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pgdump-age:test -d -i /key \
   | docker run -i --rm --network "$NET" -e PGPASSWORD=postgres postgres:18 \
       pg_restore -h postgres -U postgres -d app_restore --no-owner
 rows=$(psql_pg -d app_restore -Atc 'select count(*) from items')
@@ -118,7 +118,7 @@ chmod +x "$WRAP"
 before=$(run list | grep -v partial | sort)
 build_args
 docker run -d --name pgb-sched --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" -e RUN_ON_START=1 \
-  -v "$WRAP:/usr/local/bin/rclone:ro" pg-backup:test schedule >/dev/null
+  -v "$WRAP:/usr/local/bin/rclone:ro" pgdump-age:test schedule >/dev/null
 for _ in $(seq 1 30); do
   docker logs pgb-sched 2>&1 | grep -q 'run de demarrage en echec' && break
   sleep 1
@@ -151,7 +151,7 @@ ok "pg_dump tue en cours de flux : rien publie, partiel supprime"
 
 # 9. SIGTERM pendant un upload : arret rapide (pas de SIGKILL de docker), code 0.
 XENV=(-e RCLONE_BWLIMIT=3M -e RUN_ON_START=1); build_args; XENV=()
-docker run -d --name pgb-term --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" pg-backup:test schedule >/dev/null
+docker run -d --name pgb-term --read-only --tmpfs /tmp:size=8m "${ARGS[@]}" pgdump-age:test schedule >/dev/null
 sleep 6
 start=$SECONDS
 docker stop pgb-term >/dev/null
@@ -167,7 +167,7 @@ docker run -d --name pgb-orphan --network "$NET" --entrypoint sh -e RCLONE_CONFI
   -e RCLONE_CONFIG_T_TYPE=s3 -e RCLONE_CONFIG_T_PROVIDER=Other -e RCLONE_CONFIG_T_ENDPOINT=http://s3:9090 \
   -e RCLONE_CONFIG_T_REGION=us-east-1 -e RCLONE_CONFIG_T_ACCESS_KEY_ID=test \
   -e RCLONE_CONFIG_T_SECRET_ACCESS_KEY=test-secret -e RCLONE_CONFIG_T_NO_CHECK_BUCKET=true \
-  -e RCLONE_S3_CHUNK_SIZE=5M pg-backup:test \
+  -e RCLONE_S3_CHUNK_SIZE=5M pgdump-age:test \
   -c 'head -c 419430400 /dev/urandom | rclone rcat --bwlimit 4M T:backups/orphan.partial' >/dev/null
 sleep 8
 docker kill pgb-orphan >/dev/null; docker rm -f pgb-orphan >/dev/null
@@ -183,7 +183,7 @@ XENV=()
 big=$(run list | grep '\.dump\.age$' | sort -t';' -k2 | tail -n1 | cut -d';' -f1)
 [[ $big -gt 20000000 ]] || die "gros dump trop petit pour exercer le multipart ($big octets)"
 psql_pg -qc "CREATE DATABASE app_restore_big"
-run get latest | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pg-backup:test -d -i /key \
+run get latest | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pgdump-age:test -d -i /key \
   | docker run -i --rm --network "$NET" -e PGPASSWORD=postgres postgres:18 \
       pg_restore -h postgres -U postgres -d app_restore_big --no-owner \
   || die "restauration du gros dump en echec"

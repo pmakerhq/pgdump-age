@@ -1,13 +1,13 @@
-# Accessory Kamal pour pg-backup.
+# Accessory Kamal pour pgdump-age.
 #
 # A fusionner dans config/deploy.yml (ou config/deploy.<destination>.yml), sous `accessories:`.
-# Remplacer OWNER/REPO et le tag par ceux de votre image publiee (voir README, "Publier l'image").
+# L'image est publiee par le workflow image.yml a chaque tag vX.Y.Z (voir README, "Publishing the image").
 # Tout ce qui est en MAJUSCULES entre guillemets ci-dessous est un exemple a adapter.
 accessories:
   pg_backup:
     # Epingler une version, jamais `latest` ; ajouter le digest (@sha256:...) pour un deploiement
     # reproductible. Le workflow image.yml affiche le digest dans le resume du run.
-    image: ghcr.io/OWNER/REPO:v0.1.0
+    image: ghcr.io/pmakerhq/pgdump-age:v0.1.0
 
     # Hote qui atteint Postgres en direct (pas via PgBouncer : un pg_dump ne doit pas passer par
     # un pooler en mode transaction). Peut etre l'hote de la base elle-meme.

@@ -1,4 +1,4 @@
-# pg-backup
+# pgdump-age
 
 Image Docker + script bash qui sauvegarde **une base PostgreSQL 18 en un seul objet S3 compressé et chiffré**, sans fichier local :
 
@@ -10,7 +10,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 
 ## Fichiers
 
-- `bin/pg-backup` : tout le comportement (`schedule`, `once`, `list`, `get`). Copié dans l'image.
+- `bin/pgdump-age` : tout le comportement (`schedule`, `once`, `list`, `get`). Copié dans l'image.
 - `Dockerfile` : Alpine 3.23, `postgresql18-client`, `age`, `rclone`, `bash`, `tini`, utilisateur non root.
 - `test/run.sh`, `test/compose.yml`, `test/init.sql` : test de bout en bout (Docker requis).
 - `examples/kamal/` : bloc d'accessory Kamal, lignes de secrets, SQL du rôle. Validés en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces fichiers changent.
@@ -19,8 +19,8 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 
 ## Tester
 
-- `bash test/run.sh` : environ 2 minutes, 11 cas, tout doit passer avant un commit qui touche `bin/pg-backup` ou le `Dockerfile`. Postgres 18 + `adobe/s3mock` (épinglé), conteneur en lecture seule.
-- `bash -n bin/pg-backup test/run.sh` pour la syntaxe seule.
+- `bash test/run.sh` : environ 2 minutes, 11 cas, tout doit passer avant un commit qui touche `bin/pgdump-age` ou le `Dockerfile`. Postgres 18 + `adobe/s3mock` (épinglé), conteneur en lecture seule.
+- `bash -n bin/pgdump-age test/run.sh` pour la syntaxe seule.
 - Un test qui n'a jamais échoué ne prouve rien : pour un nouveau garde-fou, réintroduire le bug dans une copie du projet et vérifier que le test rouge l'attrape (c'est ainsi que les tests 7 et 9 ont été validés).
 
 ## Invariants à ne pas casser

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔐 pg-backup
+# 🔐 pgdump-age
 
 **A compressed, encrypted `pg_dump` as a single file on S3. Never touching the disk.**
 
@@ -12,7 +12,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
 <!-- Once the repository is published, add the CI badge:
-![CI](https://github.com/OWNER/REPO/actions/workflows/image.yml/badge.svg) -->
+![CI](https://github.com/pmakerhq/pgdump-age/actions/workflows/image.yml/badge.svg) -->
 
 </div>
 
@@ -20,7 +20,7 @@
 
 Your database is tens or hundreds of GB, the host disk is half full, and you want a **logical**, **off-site**, **encrypted** backup that you can restore **even if this tool is gone**.
 
-`pg-backup` does exactly that and nothing else: one database, one file per day, a simple retention policy.
+`pgdump-age` does exactly that and nothing else: one database, one file per day, a simple retention policy.
 
 | | |
 |---|---|
@@ -46,7 +46,7 @@ flowchart LR
 pg_dump --format=custom --compress=zstd:5  |  age --recipient <public key>  |  rclone rcat  ->  <db>-YYYYMMDDTHHMMSSZ.dump.age
 ```
 
-One Alpine image (`pg_dump` 18, `age`, `rclone`, `bash`, `tini`), one script (`bin/pg-backup`), no application dependency.
+One Alpine image (`pg_dump` 18, `age`, `rclone`, `bash`, `tini`), one script (`bin/pgdump-age`), no application dependency.
 
 ## 🚀 Quick start
 
@@ -61,17 +61,17 @@ age-keygen -o private-key.txt     # prints the public key age1...
 **3. Build the image and run a first dump:**
 
 ```sh
-docker build -t pg-backup .
+docker build -t pgdump-age .
 
 docker run --rm --read-only --tmpfs /tmp:size=8m \
   -e PGHOST=db.example.com -e PGUSER=backup -e PGPASSWORD='...' -e PGDATABASE=mydb \
   -e AGE_RECIPIENT=age1... \
   -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=my-backups \
   -e S3_ACCESS_KEY_ID='...' -e S3_SECRET_ACCESS_KEY='...' \
-  pg-backup once
+  pgdump-age once
 ```
 
-**4. Check:** `pg-backup list`, then restore into a throwaway database (see below).
+**4. Check:** `pgdump-age list`, then restore into a throwaway database (see below).
 
 With no command, the container runs `schedule`: one dump per day at `BACKUP_AT` (UTC).
 
@@ -95,15 +95,15 @@ Everything is in [`examples/kamal/`](examples/kamal):
 ```sh
 bin/kamal accessory boot pg_backup
 bin/kamal accessory logs pg_backup
-bin/kamal accessory exec pg_backup --reuse "pg-backup once"
-bin/kamal accessory exec pg_backup --reuse "pg-backup list"
+bin/kamal accessory exec pg_backup --reuse "pgdump-age once"
+bin/kamal accessory exec pg_backup --reuse "pgdump-age list"
 ```
 
 The example was validated by rendering the real `docker run` command with Kamal 2.12: `--read-only`, `--tmpfs /tmp:size=8m`, `--restart unless-stopped`, and aliased secrets (`PGPASSWORD` comes from `BACKUP_DB_PASSWORD`). It has **not** been deployed to a real server.
 
 ### 📦 Publishing the image
 
-A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.yml): end-to-end tests, then publication to `ghcr.io/<owner>/<repo>`. The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.0@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
+A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.yml): end-to-end tests, then publication to `ghcr.io/pmakerhq/pgdump-age`. The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.0@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
 
 ## ⚙️ Configuration
 
@@ -115,14 +115,14 @@ A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.
 | `S3_PROVIDER` | rclone provider (default `Other`). `OVHcloud` exists in rclone 1.72: **never tried** |
 | `KEEP` | Dumps to keep (default `3`) |
 | `BACKUP_AT` | Daily run time, `HH:MM` UTC (default `03:30`) |
-| `RUN_ON_START` | `1` runs a dump when the container starts. **Avoid it with an automatic restart policy**: every restart takes a full dump and pushes older ones out of the `KEEP` window. For a first run, use `pg-backup once` |
+| `RUN_ON_START` | `1` runs a dump when the container starts. **Avoid it with an automatic restart policy**: every restart takes a full dump and pushes older ones out of the `KEEP` window. For a first run, use `pgdump-age once` |
 | `PG_COMPRESS` | `pg_dump` compression (default `zstd:5`) |
 | `MULTIPART_MAX_AGE` | Age after which an abandoned upload is cleaned up (default `24h`) |
 | `RCLONE_S3_CHUNK_SIZE`, `RCLONE_S3_UPLOAD_CONCURRENCY` | Upload parts (default `32M` x 2, about 312 GiB maximum per object) |
 
 The database name may only contain `[A-Za-z0-9_-]`. **One database per container.** Without `S3_PREFIX`, the cleanup of abandoned uploads covers the whole bucket: use a dedicated bucket or a prefix.
 
-Commands: `pg-backup schedule` (default), `once`, `list`, `get latest > dump.age`.
+Commands: `pgdump-age schedule` (default), `once`, `list`, `get latest > dump.age`.
 
 Log lines are prefixed `INFO`, `WARN` or `ERROR` (the messages themselves are in French, without accents). Alert on `ERROR`.
 

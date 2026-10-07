@@ -4,10 +4,10 @@ FROM alpine:3.23
 RUN apk add --no-cache bash tini age rclone postgresql18-client \
   && adduser -D -u 10001 backup
 
-COPY bin/pg-backup /usr/local/bin/pg-backup
+COPY bin/pgdump-age /usr/local/bin/pgdump-age
 
 USER backup
 # -g : SIGTERM va a tout le groupe (pg_dump, age, rclone), pas seulement a bash, sinon docker stop
 # attend 10 s puis tue le conteneur en plein upload.
-ENTRYPOINT ["/sbin/tini", "-g", "--", "pg-backup"]
+ENTRYPOINT ["/sbin/tini", "-g", "--", "pgdump-age"]
 CMD ["schedule"]

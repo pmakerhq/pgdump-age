@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pg-backup : pg_dump (format custom, compresse) -> age -> un seul objet S3, sans fichier local.
+# pgdump-age : pg_dump (format custom, compresse) -> age -> un seul objet S3, sans fichier local.
 #
 # Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest>
 #
@@ -156,7 +156,7 @@ main() {
     once)     backup_once ;;
     list)     rclone lsf --format sp --files-only "$DEST" ;;
     get)
-      name=${2:?usage: pg-backup get <nom|latest>}
+      name=${2:?usage: pgdump-age get <nom|latest>}
       if [[ $name == latest ]]; then
         listing=$(list_dumps) || { fail "listing du bucket impossible"; exit 1; }
         name=${listing%%$'\n'*}
