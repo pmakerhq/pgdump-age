@@ -11,8 +11,7 @@
 ![Tests: bash + Docker](https://img.shields.io/badge/tests-bash%20%2B%20Docker-2ea44f)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 
-<!-- Once the repository is published, add the CI badge:
-![CI](https://github.com/pmakerhq/pgdump-age/actions/workflows/image.yml/badge.svg) -->
+![CI](https://github.com/pmakerhq/pgdump-age/actions/workflows/image.yml/badge.svg)
 
 </div>
 
