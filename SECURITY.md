@@ -1,23 +1,23 @@
-# Politique de sécurité
+# Security policy
 
-## Signaler une vulnérabilité
+## Reporting a vulnerability
 
-**N'ouvrez pas d'issue publique.** Utilisez les *Security Advisories* de GitHub (onglet *Security*, puis *Report a vulnerability*) pour un signalement privé.
+**Do not open a public issue.** Use GitHub *Security Advisories* (the *Security* tab, then *Report a vulnerability*) to report privately.
 
-Indiquez la version de l'image (tag ou digest), les conditions de reproduction et l'impact. Un accusé de réception est envoyé dès que possible ; il n'y a pas de délai garanti.
+Include the image version (tag or digest), the steps to reproduce and the impact. An acknowledgement is sent as soon as possible; there is no guaranteed response time.
 
-## Versions supportées
+## Supported versions
 
-Seule la dernière version publiée est corrigée.
+Only the latest published version is fixed.
 
-## Modèle de menace
+## Threat model
 
-- Le serveur de sauvegarde ne détient que la **clé publique** age : une fuite de son environnement ne permet pas de déchiffrer les sauvegardes existantes.
-- Les secrets (`PGPASSWORD`, clés S3) transitent par l'environnement du conteneur, jamais par la ligne de commande.
-- Le conteneur tourne sans privilèges (utilisateur 10001) et fonctionne avec un système de fichiers en lecture seule.
+- The backup server only holds the age **public key**: a leak of its environment cannot decrypt existing backups.
+- Secrets (`PGPASSWORD`, S3 keys) go through the container environment, never through the command line.
+- The container runs unprivileged (user 10001) and works with a read-only filesystem.
 
-## Hors périmètre
+## Out of scope
 
-- La perte de la clé privée age rend les sauvegardes irrécupérables : c'est le comportement attendu, pas une vulnérabilité.
-- Le comportement face à un fournisseur S3 compromis ou malveillant : l'outil ne vérifie pas l'intégrité des objets après envoi au-delà de ce que garantit S3.
-- Les vulnérabilités des paquets Alpine, `age`, `rclone` et `pg_dump` embarqués : signalez-les en amont, puis ici si une mise à jour de l'image est nécessaire.
+- Losing the age private key makes backups unrecoverable: this is expected behavior, not a vulnerability.
+- Behavior against a compromised or malicious S3 provider: the tool does not verify object integrity after upload beyond what S3 guarantees.
+- Vulnerabilities in the bundled Alpine packages, `age`, `rclone` and `pg_dump`: report them upstream, then here if an image update is needed.

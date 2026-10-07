@@ -1,35 +1,35 @@
-# Contribuer à pg-backup
+# Contributing to pg-backup
 
-Merci de votre intérêt. Le projet est volontairement petit : un script, une image, un test de bout en bout.
+Thanks for your interest. The project is deliberately small: one script, one image, one end-to-end test.
 
-## Avant de commencer
+## Before you start
 
-- Ouvrez une issue pour une nouvelle fonctionnalité avant d'écrire du code. Les corrections de bug sont les bienvenues directement en pull request.
-- Lisez [`CLAUDE.md`](CLAUDE.md) : il décrit les invariants à ne pas casser (c'est la référence, même si vous n'utilisez pas Claude).
+- Open an issue before writing code for a new feature. Bug fixes are welcome directly as pull requests.
+- Read [`CLAUDE.md`](CLAUDE.md): it describes the invariants not to break (it is the reference, even if you do not use Claude). It is written in French.
 
-## Lancer les tests
+## Running the tests
 
 ```sh
-bash -n bin/pg-backup test/run.sh   # syntaxe
-bash test/run.sh                    # bout en bout, Docker requis, environ 2 minutes
+bash -n bin/pg-backup test/run.sh   # syntax only
+bash test/run.sh                    # end to end, Docker required, about 2 minutes
 ```
 
-Tous les cas doivent passer. La CI exécute la même commande.
+Every case must pass. CI runs the same command.
 
-## Règles pour une pull request
+## Pull request rules
 
-- **Un garde-fou, un test qui échoue sans lui.** Si vous corrigez un défaut ou ajoutez une vérification, ajoutez le cas dans `test/run.sh`, puis réintroduisez le bug dans une copie du projet pour constater que le test devient rouge.
-- **Toute nouvelle variable d'environnement** est validée dans `setup` et documentée dans le tableau du README.
-- **Commits** : conventional commits (`feat:`, `fix:`, `docs:`...), atomiques.
-- **Messages du script** (`log`, `warn`, `fail`) : sans accents, avec le préfixe `INFO`, `WARN` ou `ERROR`, car le monitoring les recherche.
-- Pas de dépendance ajoutée pour quelques lignes de bash.
+- **One safeguard, one test that fails without it.** If you fix a defect or add a check, add the case to `test/run.sh`, then reintroduce the bug in a copy of the project and confirm the test turns red.
+- **Every new environment variable** is validated in `setup` and documented in the README table.
+- **Commits**: conventional commits (`feat:`, `fix:`, `docs:`...), atomic.
+- **Script messages** (`log`, `warn`, `fail`): in French without accents, prefixed `INFO`, `WARN` or `ERROR`, because monitoring searches for them. Do not translate them: alerts may depend on the exact text.
+- No new dependency for a few lines of bash.
 
-## Ce que le projet refuse volontairement
+## What the project deliberately refuses
 
-- Écrire le dump sur le disque, même temporairement.
-- Un chiffrement symétrique, ou une clé privée dans l'image.
-- Sauvegarder plusieurs bases dans un même conteneur.
-- Publier directement sous le nom final, sans passer par `.partial`.
-- Supprimer d'anciens dumps avant la fin d'un run réussi.
+- Writing the dump to disk, even temporarily.
+- Symmetric encryption, or a private key in the image.
+- Backing up several databases in one container.
+- Publishing directly under the final name, without going through `.partial`.
+- Deleting old dumps before a run has fully succeeded.
 
-Si votre besoin entre dans cette liste, un autre outil (restic, pgBackRest, WAL-G) est probablement plus adapté.
+If your need is on this list, another tool (restic, pgBackRest, WAL-G) is probably a better fit.

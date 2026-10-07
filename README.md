@@ -2,94 +2,94 @@
 
 # 🔐 pg-backup
 
-**Un `pg_dump` compressé et chiffré, en un seul fichier sur S3. Sans jamais écrire sur le disque.**
+**A compressed, encrypted `pg_dump` as a single file on S3. Never touching the disk.**
 
 ![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-336791?logo=postgresql&logoColor=white)
-![Chiffrement age](https://img.shields.io/badge/chiffrement-age-6f42c1)
-![Stockage S3 via rclone](https://img.shields.io/badge/stockage-S3%20via%20rclone-2f81f7)
-![Déploiement Kamal](https://img.shields.io/badge/d%C3%A9ploiement-Kamal-e5483b)
-![Tests bash et Docker](https://img.shields.io/badge/tests-bash%20%2B%20Docker-2ea44f)
+![Encryption: age](https://img.shields.io/badge/encryption-age-6f42c1)
+![Storage: S3 via rclone](https://img.shields.io/badge/storage-S3%20via%20rclone-2f81f7)
+![Deploy: Kamal](https://img.shields.io/badge/deploy-Kamal-e5483b)
+![Tests: bash + Docker](https://img.shields.io/badge/tests-bash%20%2B%20Docker-2ea44f)
 
-<!-- Une fois le dépôt publié, ajouter le badge CI :
+<!-- Once the repository is published, add the CI badge:
 ![CI](https://github.com/OWNER/REPO/actions/workflows/image.yml/badge.svg) -->
 
 </div>
 
-## ✨ Pourquoi
+## ✨ Why
 
-Votre base fait des dizaines ou des centaines de Go, le disque de l'hôte est à moitié plein, et vous voulez une sauvegarde logique **hors site**, **chiffrée**, que vous pouvez restaurer **même si cet outil a disparu**.
+Your database is tens or hundreds of GB, the host disk is half full, and you want a **logical**, **off-site**, **encrypted** backup that you can restore **even if this tool is gone**.
 
-`pg-backup` fait exactement ça, et rien d'autre : une base, un fichier par jour, une rétention simple.
+`pg-backup` does exactly that and nothing else: one database, one file per day, a simple retention policy.
 
 | | |
 |---|---|
-| 📦 **Un seul objet par sauvegarde** | `mabase-20261007T033000Z.dump.age`. Pas de dépôt, pas de manifest, pas de parts à recoller |
-| 🚫💾 **Aucun fichier local** | Le dump part en flux. Les tests tournent avec un conteneur en lecture seule |
-| 🔒 **Chiffré avec [age](https://github.com/FiloSottile/age)** | Clé publique sur le serveur, clé privée chez vous : le serveur ne peut pas lire ses propres sauvegardes |
-| 🛡️ **Jamais de dump tronqué publié** | Écriture en `.partial`, publication seulement si `pg_dump`, `age` et `rclone` ont tous réussi |
-| ♻️ **Rétention sûre** | Garde les `KEEP` derniers dumps, supprime **après** un run réussi, jamais après un échec |
-| 🧰 **Restaurable sans l'outil** | `age -d` puis `pg_restore`, deux commandes standard |
-| 🐳 **Prêt pour Kamal** | Un accessory à copier, des secrets aliasés, validé avec Kamal 2.12 |
+| 📦 **One object per backup** | `mydb-20261007T033000Z.dump.age`. No repository, no manifest, no parts to stitch back together |
+| 🚫💾 **No local file** | The dump is streamed. The tests run with a read-only container |
+| 🔒 **Encrypted with [age](https://github.com/FiloSottile/age)** | Public key on the server, private key with you: the server cannot read its own backups |
+| 🛡️ **A truncated dump is never published** | Written as `.partial`, published only if `pg_dump`, `age` and `rclone` all succeeded |
+| ♻️ **Safe retention** | Keeps the last `KEEP` dumps, prunes **after** a successful run, never after a failure |
+| 🧰 **Restorable without the tool** | `age -d` then `pg_restore`: two standard commands |
+| 🐳 **Kamal ready** | One accessory to copy, aliased secrets, validated with Kamal 2.12 |
 
-## 🧭 Comment ça marche
+## 🧭 How it works
 
 ```mermaid
 flowchart LR
   PG[(PostgreSQL 18)] -->|pg_dump -Fc, zstd| AGE[age]
-  AGE -->|rclone rcat| P["nom.partial"]
-  P -->|"moveto, si les 3 étapes ont réussi"| F["mabase-DATE.dump.age"]
-  F --> R["rétention : garder les KEEP derniers"]
+  AGE -->|rclone rcat| P["name.partial"]
+  P -->|"moveto, if all 3 stages succeeded"| F["mydb-DATE.dump.age"]
+  F --> R["retention: keep the last KEEP"]
 ```
 
 ```
-pg_dump --format=custom --compress=zstd:5  |  age --recipient <clé publique>  |  rclone rcat  ->  <base>-AAAAMMJJTHHMMSSZ.dump.age
+pg_dump --format=custom --compress=zstd:5  |  age --recipient <public key>  |  rclone rcat  ->  <db>-YYYYMMDDTHHMMSSZ.dump.age
 ```
 
-Une image Alpine (`pg_dump` 18, `age`, `rclone`, `bash`, `tini`), un script (`bin/pg-backup`), aucune dépendance applicative.
+One Alpine image (`pg_dump` 18, `age`, `rclone`, `bash`, `tini`), one script (`bin/pg-backup`), no application dependency.
 
-## 🚀 Démarrage rapide
+## 🚀 Quick start
 
-**1. Générer la paire de clés age** (la clé privée ne quitte jamais votre gestionnaire de mots de passe) :
+**1. Generate the age key pair** (the private key never leaves your password manager):
 
 ```sh
-age-keygen -o cle-privee.txt     # affiche la clé publique age1...
+age-keygen -o private-key.txt     # prints the public key age1...
 ```
 
-**2. Créer un rôle en lecture seule** : voir [`examples/kamal/setup.sql`](examples/kamal/setup.sql).
+**2. Create a read-only role**: see [`examples/kamal/setup.sql`](examples/kamal/setup.sql).
 
-**3. Construire l'image et lancer un premier dump :**
+**3. Build the image and run a first dump:**
 
 ```sh
 docker build -t pg-backup .
 
 docker run --rm --read-only --tmpfs /tmp:size=8m \
-  -e PGHOST=db.example.com -e PGUSER=backup -e PGPASSWORD='...' -e PGDATABASE=mabase \
+  -e PGHOST=db.example.com -e PGUSER=backup -e PGPASSWORD='...' -e PGDATABASE=mydb \
   -e AGE_RECIPIENT=age1... \
-  -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=mes-backups \
+  -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=my-backups \
   -e S3_ACCESS_KEY_ID='...' -e S3_SECRET_ACCESS_KEY='...' \
   pg-backup once
 ```
 
-**4. Vérifier :** `pg-backup list`, puis restaurer dans une base jetable (voir plus bas).
+**4. Check:** `pg-backup list`, then restore into a throwaway database (see below).
 
-Sans commande, le conteneur lance `schedule` : un dump par jour à `BACKUP_AT` (UTC).
+With no command, the container runs `schedule`: one dump per day at `BACKUP_AT` (UTC).
 
-## 🚢 Intégration Kamal
+## 🚢 Kamal integration
 
-Tout est dans [`examples/kamal/`](examples/kamal) :
+Everything is in [`examples/kamal/`](examples/kamal):
 
-| Fichier | Rôle |
+| File | Purpose |
 |---|---|
-| [`deploy.pg_backup.yml`](examples/kamal/deploy.pg_backup.yml) | Le bloc `accessories:` à fusionner dans votre `deploy.yml` |
-| [`secrets.example`](examples/kamal/secrets.example) | Les lignes à ajouter à `.kamal/secrets` (exemple Bitwarden) |
-| [`setup.sql`](examples/kamal/setup.sql) | Le rôle Postgres en lecture seule |
+| [`deploy.pg_backup.yml`](examples/kamal/deploy.pg_backup.yml) | The `accessories:` block to merge into your `deploy.yml` |
+| [`secrets.example`](examples/kamal/secrets.example) | The lines to add to `.kamal/secrets` (Bitwarden example) |
+| [`setup.sql`](examples/kamal/setup.sql) | The read-only Postgres role |
 
-**Étapes :**
+**Steps:**
 
-1. Générer la clé age, créer le rôle `backup`, créer le bucket et un utilisateur S3 dédié à ce bucket.
-2. Créer les 3 secrets (`BACKUP_DB_PASSWORD`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`) **avant** de modifier `.kamal/secrets` : un item manquant fait échouer toute commande Kamal de la destination, `kamal deploy` compris.
-3. Fusionner `deploy.pg_backup.yml` dans votre config, puis renseigner l'image, l'hôte, la base, le bucket et la clé publique.
-4. Démarrer, puis forcer un premier run sans attendre `BACKUP_AT` :
+1. Generate the age key, create the `backup` role, create the bucket and an S3 user dedicated to that bucket.
+2. Create the 3 secrets (`BACKUP_DB_PASSWORD`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`) **before** editing `.kamal/secrets`: a missing item makes every Kamal command for that destination fail, `kamal deploy` included.
+3. Merge `deploy.pg_backup.yml` into your config, then fill in the image, host, database, bucket and public key.
+4. Boot it, then force a first run without waiting for `BACKUP_AT`:
 
 ```sh
 bin/kamal accessory boot pg_backup
@@ -98,91 +98,93 @@ bin/kamal accessory exec pg_backup --reuse "pg-backup once"
 bin/kamal accessory exec pg_backup --reuse "pg-backup list"
 ```
 
-L'exemple a été validé en rendant la vraie commande `docker run` avec Kamal 2.12 : `--read-only`, `--tmpfs /tmp:size=8m`, `--restart unless-stopped`, et les secrets aliasés (`PGPASSWORD` vient de `BACKUP_DB_PASSWORD`). Il n'a **pas** été déployé sur un vrai serveur.
+The example was validated by rendering the real `docker run` command with Kamal 2.12: `--read-only`, `--tmpfs /tmp:size=8m`, `--restart unless-stopped`, and aliased secrets (`PGPASSWORD` comes from `BACKUP_DB_PASSWORD`). It has **not** been deployed to a real server.
 
-### 📦 Publier l'image
+### 📦 Publishing the image
 
-Un tag `vX.Y.Z` déclenche [`.github/workflows/image.yml`](.github/workflows/image.yml) : tests de bout en bout, puis publication sur `ghcr.io/<propriétaire>/<dépôt>`. Le digest est écrit dans le résumé du run : copiez-le dans l'image de l'accessory (`image: ...:v0.1.0@sha256:...`). Pour que les hôtes puissent tirer l'image sans `docker login`, rendez le paquet public. Ce workflow n'a pas encore tourné.
+A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.yml): end-to-end tests, then publication to `ghcr.io/<owner>/<repo>`. The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.0@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
 
 ## ⚙️ Configuration
 
-| Variable | Rôle |
+| Variable | Purpose |
 |---|---|
-| `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Connexion. Rôle en lecture seule, connexion directe (pas de PgBouncer). `PGPORT` optionnel |
-| `AGE_RECIPIENT` | Clé publique age (`age1...`) |
-| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Destination. La région est obligatoire : OVH la vérifie dans la signature (par exemple `sbg`). `S3_PREFIX` optionnel |
-| `S3_PROVIDER` | Provider rclone (défaut `Other`). `OVHcloud` existe dans rclone 1.72 : **jamais essayé** |
-| `KEEP` | Dumps conservés (défaut `3`) |
-| `BACKUP_AT` | Heure du run quotidien, `HH:MM` UTC (défaut `03:30`) |
-| `RUN_ON_START` | `1` pour lancer un dump au démarrage. **À éviter avec un redémarrage automatique** : chaque redémarrage prend un dump complet et repousse les anciens hors des `KEEP` conservés. Pour un premier run, utiliser `pg-backup once` |
-| `PG_COMPRESS` | Compression de `pg_dump` (défaut `zstd:5`) |
-| `MULTIPART_MAX_AGE` | Âge à partir duquel un upload abandonné est nettoyé (défaut `24h`) |
-| `RCLONE_S3_CHUNK_SIZE`, `RCLONE_S3_UPLOAD_CONCURRENCY` | Parts de l'upload (défaut `32M` x 2, plafond d'environ 312 Gio par objet) |
+| `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | Connection. Read-only role, direct connection (no PgBouncer). `PGPORT` is optional |
+| `AGE_RECIPIENT` | age public key (`age1...`) |
+| `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Destination. The region is required: OVH checks it in the request signature (for example `sbg`). `S3_PREFIX` is optional |
+| `S3_PROVIDER` | rclone provider (default `Other`). `OVHcloud` exists in rclone 1.72: **never tried** |
+| `KEEP` | Dumps to keep (default `3`) |
+| `BACKUP_AT` | Daily run time, `HH:MM` UTC (default `03:30`) |
+| `RUN_ON_START` | `1` runs a dump when the container starts. **Avoid it with an automatic restart policy**: every restart takes a full dump and pushes older ones out of the `KEEP` window. For a first run, use `pg-backup once` |
+| `PG_COMPRESS` | `pg_dump` compression (default `zstd:5`) |
+| `MULTIPART_MAX_AGE` | Age after which an abandoned upload is cleaned up (default `24h`) |
+| `RCLONE_S3_CHUNK_SIZE`, `RCLONE_S3_UPLOAD_CONCURRENCY` | Upload parts (default `32M` x 2, about 312 GiB maximum per object) |
 
-Le nom de base ne peut contenir que `[A-Za-z0-9_-]`. **Une base par conteneur.** Sans `S3_PREFIX`, le nettoyage des uploads abandonnés couvre tout le bucket : utilisez un bucket dédié ou un préfixe.
+The database name may only contain `[A-Za-z0-9_-]`. **One database per container.** Without `S3_PREFIX`, the cleanup of abandoned uploads covers the whole bucket: use a dedicated bucket or a prefix.
 
-Commandes : `pg-backup schedule` (défaut), `once`, `list`, `get latest > dump.age`.
+Commands: `pg-backup schedule` (default), `once`, `list`, `get latest > dump.age`.
 
-## 🔓 Restaurer, sans cet outil
+Log lines are prefixed `INFO`, `WARN` or `ERROR` (the messages themselves are in French, without accents). Alert on `ERROR`.
 
-```sh
-age -d -i cle-privee.txt dump.age | pg_restore -d mabase --no-owner
-```
-
-- Le dump est une archive `pg_dump` 1.16 : il faut **`pg_restore` 17 ou plus** (la 16 refuse de le lire, vérifié), de préférence 18.
-- Ce pipe est mono-processus. Pour une grosse base, déchiffrez d'abord dans un fichier (l'espace disque est alors nécessaire sur la machine de restauration), puis restaurez en parallèle :
+## 🔓 Restoring, without this tool
 
 ```sh
-age -d -i cle-privee.txt dump.age > base.dump
-pg_restore -j 4 -d mabase --no-owner base.dump
+age -d -i private-key.txt dump.age | pg_restore -d mydb --no-owner
 ```
 
-## 🧪 Fiabilité : ce qui est testé
+- The dump is a `pg_dump` archive version 1.16: you need **`pg_restore` 17 or newer** (16 refuses to read it, verified), preferably 18.
+- This pipe is single-process. For a large database, decrypt to a file first (this needs disk space on the restore machine), then restore in parallel:
 
-`bash test/run.sh` (Docker requis, environ 2 minutes) lance Postgres 18 et un S3 factice, avec le conteneur en **lecture seule**. 11 cas :
+```sh
+age -d -i private-key.txt dump.age > db.dump
+pg_restore -j 4 -d mydb --no-owner db.dump
+```
 
-- ✅ 4 runs donnent exactement les 3 dumps les plus récents
-- ✅ restauration complète via `age` puis `pg_restore`
-- ✅ échec de connexion avec `KEEP=1` : rien supprimé, rien publié
-- ✅ `pg_dump` en échec, ou **tué en cours de flux** : rien publié
-- ✅ nettoyage des `.partial` limité à la base, au préfixe et à l'âge
-- ✅ `S3_PREFIX` respecté
-- ✅ mode `schedule` avec un `moveto` en échec : `ERROR`, jamais `termine`, rien publié
-- ✅ `docker stop` pendant un upload : arrêt en 1 s, code 0
-- ✅ upload multipart orphelin nettoyé au run suivant
-- ✅ gros dump de 86 Mo en multipart, copie multipart au renommage, 1,5 million de lignes restaurées
+## 🧪 Reliability: what is tested
 
-Les garde-fous critiques ont été vérifiés par mutation : réintroduire le bug dans une copie fait échouer le test attendu.
+`bash test/run.sh` (Docker required, about 2 minutes) runs Postgres 18 and a fake S3 server, with the container **read-only**. 11 cases:
 
-## ⚠️ Avant la production : valider contre OVH
+- ✅ 4 runs leave exactly the 3 most recent dumps
+- ✅ full restore through `age` then `pg_restore`
+- ✅ connection failure with `KEEP=1`: nothing deleted, nothing published
+- ✅ `pg_dump` failing, or **killed mid-stream**: nothing published
+- ✅ `.partial` cleanup limited to the database, the prefix and the age
+- ✅ `S3_PREFIX` honored
+- ✅ `schedule` mode with a failing `moveto`: logged as `ERROR`, never as a success, nothing published
+- ✅ `docker stop` during an upload: stops in 1 s, exit code 0
+- ✅ orphaned multipart upload cleaned up on the next run
+- ✅ an 86 MB dump through multipart upload and multipart copy on rename, 1.5 million rows restored
 
-Les tests tournent contre un serveur S3 factice, **pas contre OVH Object Storage**. Deux comportements restent à vérifier avant de compter sur l'outil pour une grosse base :
+The critical safeguards were checked by mutation: reintroducing the bug in a copy makes the expected test fail.
 
-1. **Le renommage final (`rclone moveto`) est une copie côté serveur**, donc une seconde écriture complète de l'objet. Au-delà de 4,6 Gio, rclone utilise une copie multipart (`UploadPartCopy`). Si OVH ne la supporte pas ou la rend très lente, un dump de dizaines de Go échouerait à cette étape après des heures de dump, en laissant le `.partial`. Testez un renommage réel de plus de 5 Gio :
+## ⚠️ Before production: validate against OVH
+
+The tests run against a fake S3 server, **not against OVH Object Storage**. Two behaviors remain to be verified before relying on the tool for a large database:
+
+1. **The final rename (`rclone moveto`) is a server-side copy**, hence a second full write of the object. Above 4.6 GiB, rclone uses a multipart copy (`UploadPartCopy`). If OVH does not support it or makes it very slow, a dump of tens of GB would fail at this step after hours of dumping, leaving the `.partial` behind. Test a real rename of more than 5 GiB:
    ```sh
    head -c 6G /dev/urandom | rclone rcat ovh:bucket/test.partial
    time rclone moveto ovh:bucket/test.partial ovh:bucket/test.bin
    ```
-2. **Le nettoyage des uploads abandonnés** (`rclone backend cleanup`) suppose que le fournisseur liste les uploads en cours. Vérifiez : `rclone backend list-multipart-uploads ovh:bucket`.
+2. **Cleanup of abandoned uploads** (`rclone backend cleanup`) assumes the provider lists in-progress uploads. Check: `rclone backend list-multipart-uploads ovh:bucket`.
 
-Autres limites connues : pas de notification d'échec (surveillez les logs `ERROR` et le code de sortie), aucun dump de 121 Go réellement mesuré, un run tué en plein upload laisse des parts invisibles nettoyées au run suivant.
+Other known limits: no failure notification (watch the `ERROR` logs and the exit code), no real 121 GB dump measured, a run killed mid-upload leaves invisible parts that are cleaned up by the next run.
 
 ## ❓ FAQ
 
-**Pourquoi pas restic (ou kamal-backup) ?** Restic écrit un dépôt de packs chiffrés, pas un fichier unique : on ne peut pas simplement télécharger le dump, il faut restic et son mot de passe. Ici, un objet S3 = un dump.
+**Why not restic (or kamal-backup)?** Restic writes a repository of encrypted packs, not a single file: you cannot simply download the dump, you need restic and its password. Here, one S3 object is one dump.
 
-**Pourquoi age plutôt que GPG ?** Pas de trousseau à importer (donc compatible avec un conteneur en lecture seule), une clé publique d'une ligne, pas de modèle de confiance à configurer, et un fichier tronqué fait échouer `age -d` (code de sortie 1, vérifié, même avec 10 octets manquants), après avoir émis les blocs déjà authentifiés. GPG reste le bon choix si vous avez déjà une infrastructure de clés, des signatures ou de la révocation. Je n'ai pas testé GPG dans ce pipeline.
+**Why age rather than GPG?** No keyring to import (so it works with a read-only container), a one-line public key, no trust model to configure, and a truncated file makes `age -d` fail (exit code 1, verified, even with 10 bytes missing), after it has emitted the chunks it already authenticated. GPG remains the right choice if you already have key infrastructure, signatures or revocation. GPG was not tested in this pipeline.
 
-**Pourquoi un fichier sur disque est-il exclu ?** Un dump de 100 Go sur un disque à moitié plein est un incident en attente. Le flux n'a besoin que de quelques dizaines de Mo de mémoire.
+**Why is a file on disk ruled out?** A 100 GB dump on a half-full disk is an incident waiting to happen. Streaming needs only a few tens of MB of memory.
 
-**Que se passe-t-il si `pg_dump` plante en route ?** `age` et `rclone` terminent normalement le flux tronqué, c'est pourquoi les trois statuts du pipeline sont contrôlés. Le fichier reste sous `.partial`, il est supprimé, et les dumps existants ne sont pas touchés.
+**What happens if `pg_dump` crashes midway?** `age` and `rclone` finish the truncated stream normally, which is why all three pipeline statuses are checked. The file stays under `.partial`, it is deleted, and existing dumps are untouched.
 
-**Et plusieurs bases ?** Un conteneur par base. C'est volontaire : un échec ne bloque pas les autres, et la rétention reste lisible.
+**What about several databases?** One container per database. This is deliberate: one failure does not block the others, and retention stays readable.
 
-## 🤝 Contribuer
+## 🤝 Contributing
 
-Les contributions sont bienvenues. Lisez [`CONTRIBUTING.md`](CONTRIBUTING.md) : comment lancer les tests, les invariants à respecter (aucun fichier sur disque, vérifications explicites des erreurs) et ce que le projet refuse volontairement.
+Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md): how to run the tests, the invariants to respect (no file on disk, explicit error checks) and what the project deliberately refuses.
 
-## 🔒 Sécurité
+## 🔒 Security
 
-Voir [`SECURITY.md`](SECURITY.md) pour signaler une vulnérabilité sans l'exposer publiquement.
+See [`SECURITY.md`](SECURITY.md) to report a vulnerability without exposing it publicly.

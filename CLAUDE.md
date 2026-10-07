@@ -38,7 +38,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 
 ## Conventions
 
-- Messages du script sans accents (`log`, `warn`, `fail`), préfixe `INFO`/`WARN`/`ERROR` : c'est ce que le monitoring recherchera. README et commentaires de test en français accentué.
+- Messages du script sans accents (`log`, `warn`, `fail`), préfixe `INFO`/`WARN`/`ERROR` : c'est ce que le monitoring recherchera. Le script, les exemples, les commentaires de test et ce fichier restent en français. README, CONTRIBUTING et SECURITY sont en anglais (documents communautaires) : ne pas les repasser en français, et garder cohérents les noms de variables et les extraits de logs qu'ils citent.
 - Pas d'emojis ni de tirets cadratins dans le code, les logs et ce fichier. Le README en utilise (choix assumé pour un README communautaire) : ne pas les retirer.
 - Commits : conventional commits, atomiques, message en français.
 - Ne pas ajouter de dépendance (paquet Alpine, outil) pour quelques lignes de bash.
