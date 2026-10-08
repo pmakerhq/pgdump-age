@@ -108,7 +108,7 @@ A `vX.Y.Z` tag triggers [`.github/workflows/image.yml`](.github/workflows/image.
 docker pull ghcr.io/pmakerhq/pgdump-age:v0.1.1
 ```
 
-The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.1@sha256:...`). For hosts to pull the image without `docker login`, make the package public. This workflow has not run yet.
+The digest is written to the run summary: copy it into the accessory image (`image: ...:v0.1.1@sha256:...`). For hosts to pull the image without `docker login`, make the package public.
 
 To cut a release, run the `/release` skill in Claude Code ([`.claude/skills/release/SKILL.md`](.claude/skills/release/SKILL.md)). It checks that `main` is clean and pushed, proposes the next version from the conventional commits, asks for confirmation, then creates and pushes the annotated tag. Without Claude: `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z` from an up-to-date `main`.
 
