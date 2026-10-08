@@ -15,6 +15,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 - `test/run.sh`, `test/compose.yml`, `test/init.sql` : test de bout en bout (Docker requis).
 - `README.md`, section Kamal : bloc d'accessory, lignes de secrets et SQL du rôle sont en ligne (plus de dossier `examples/`). Le bloc a été validé en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces extraits changent.
 - `.github/workflows/image.yml` : tests sur pull request, publication sur ghcr.io à chaque tag `v*`. Premier run réel : v0.1.0 a échoué (droits des fichiers montés sur un runner Linux), v0.1.1 a publié l'image.
+- `test/grand-objet.sh`, `.github/workflows/s3-grand-objet.yml` : objet de 5 Gio (seuil de copie multipart réel de rclone) contre SeaweedFS, hors du test principal. Manuel ou sur changement du script ; `SIZE_MIB=1024 COPY_CUTOFF=500M bash test/grand-objet.sh` pour un essai local. Ce n'est pas OVH.
 - `.claude/skills/release/SKILL.md` : skill `/release`, crée et pousse le tag `vX.Y.Z` qui déclenche la publication. À garder cohérent avec `image.yml` (format du tag).
 - `CONTRIBUTING.md`, `SECURITY.md` : à garder cohérents avec ce fichier (invariants, refus volontaires).
 
@@ -47,7 +48,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 
 ## Non validé (ne pas affirmer le contraire)
 
-- **Aucun test contre OVH réel** : seulement contre un S3 factice. Deux points sont à vérifier avant la prod (détaillés dans le README) : le `moveto` final est une copie côté serveur (`UploadPartCopy` au-delà de 4,6 Gio), et OVH doit lister les uploads multipart en cours pour que `rclone backend cleanup` fonctionne.
+- **Aucun test contre OVH réel** : seulement contre un S3 factice (s3mock) et SeaweedFS (objet de 5 Gio). Deux points sont à vérifier avant la prod (détaillés dans le README) : le `moveto` final est une copie côté serveur (`UploadPartCopy` au-delà de 4,6 Gio), et OVH doit lister les uploads multipart en cours pour que `rclone backend cleanup` fonctionne.
 - `S3_PROVIDER=OVHcloud` existe dans rclone 1.72 mais n'a jamais été essayé.
 - Aucun dump de 121 Go n'a été fait ; le plafond de 312 Gio par objet (parts de 32 Mio, 10 000 parts) est un calcul confirmé par le message de rclone, pas une mesure.
 - Pas de notification d'échec : seuls le code de sortie et les logs `ERROR`.
