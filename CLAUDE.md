@@ -13,7 +13,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 - `bin/pgdump-age` : tout le comportement (`schedule`, `once`, `list`, `get`). Copié dans l'image.
 - `Dockerfile` : Alpine 3.23, `postgresql18-client`, `age`, `rclone`, `bash`, `tini`, utilisateur non root.
 - `test/run.sh`, `test/compose.yml`, `test/init.sql` : test de bout en bout (Docker requis).
-- `examples/kamal/` : bloc d'accessory Kamal, lignes de secrets, SQL du rôle. Validés en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces fichiers changent.
+- `README.md`, section Kamal : bloc d'accessory, lignes de secrets et SQL du rôle sont en ligne (plus de dossier `examples/`). Le bloc a été validé en rendant la vraie commande `docker run` avec Kamal 2.12 ; à revalider si ces extraits changent.
 - `.github/workflows/image.yml` : tests sur pull request, publication sur ghcr.io à chaque tag `v*`. Premier run réel : v0.1.0 a échoué (droits des fichiers montés sur un runner Linux), v0.1.1 a publié l'image.
 - `.claude/skills/release/SKILL.md` : skill `/release`, crée et pousse le tag `vX.Y.Z` qui déclenche la publication. À garder cohérent avec `image.yml` (format du tag).
 - `CONTRIBUTING.md`, `SECURITY.md` : à garder cohérents avec ce fichier (invariants, refus volontaires).
