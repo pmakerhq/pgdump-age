@@ -124,7 +124,7 @@ You need **`pg_restore` 17 or newer** (16 refuses the archive). For a large data
 
 ## ⚠️ Known limits
 
-Tested against a fake S3 server (`bash test/run.sh`, Docker required, about 2 minutes), **not against OVH Object Storage**. Check these before relying on it for a large database:
+Tested against fake S3 servers, **not against OVH Object Storage**: `bash test/run.sh` (Docker required, about 2 minutes) and, in a separate CI job, a 5 GiB object on SeaweedFS (`test/grand-objet.sh`, above rclone's multipart copy threshold). Check these before relying on it for a large database:
 
 1. **The final rename (`rclone moveto`) is a server-side copy**, a second full write of the object (multipart above 4.6 GiB). If OVH does not support it or is very slow, a big dump fails at this step after hours, leaving the `.partial`. Test it:
    ```sh
