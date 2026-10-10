@@ -1,6 +1,6 @@
 # pgdump-age
 
-Image Docker + script bash qui sauvegarde **chaque base PostgreSQL 18 de `PGDATABASES` en un objet S3 compressé et chiffré**, sans fichier local :
+Image Docker + script bash qui sauvegarde **une base PostgreSQL 18 (`PGDATABASE`) en un objet S3 compressé et chiffré**, sans fichier local :
 
 ```
 pg_dump --format=custom --compress=zstd:5 | age --recipient KEY | rclone rcat DEST/<base>-AAAAMMJJTHHMMSSZ.dump.age  +  <nom>.in_progress (progression)  ->  <nom>.ok (valide)
@@ -32,7 +32,7 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 - **Les trois statuts du pipeline** (`pg_dump`, `age`, `rclone`) sont lus via `PIPESTATUS` juste après le pipeline. Si `pg_dump` échoue en route, `age` et `rclone` terminent normalement un flux tronqué : seul ce contrôle empêche sa publication.
 - **Un dump n'est valide que s'il a son `.ok`**, écrit en dernier et seulement si les trois statuts valent 0. `list`, `get` (nom explicite compris), `get latest` et la retention (`list_valid`) ignorent tout dump sans `.ok`. Le `.in_progress` est écrit avant le dump et rafraîchi toutes les `PROGRESS_EVERY` secondes (octets via `rclone rc core/stats`, serveur rc de `rclone rcat` : `127.0.0.1`, port tiré au hasard par run, jamais `--rc-no-auth`, qui ouvrirait les commandes rclone au reste du conteneur) ; il est supprimé après le `.ok`. Pas de `moveto` : aucune copie côté serveur. Le `.ok` part en premier à la suppression d'un dump, et le marqueur ne part qu'une fois le dump confirmé absent (`remove_dump`). Un listing en échec n'est jamais lu comme « absent » (`obj_state` renvoie 2). Au TERM, `progress_loop` finit son écriture en cours : le parent la `wait` avant d'écrire le `.ok`. La commande `adopt` écrit un `.ok` (`legacy=1`) aux dumps de v0.1.1, qui n'en ont pas.
 - **La rétention ne tourne qu'après le dump réussi de la base concernée**, et jamais si le listing échoue ou si un dump plus récent existe. Un échec ne supprime rien.
-- **Plusieurs bases (`PGDATABASES`, séparées par des virgules) : séquentielles, isolées.** Une base en échec n'arrête pas les suivantes, mais `backup_once` renvoie non nul. `pg_dump` reçoit `--dbname` explicitement (jamais `PGDATABASE` de l'environnement).
+- **Une seule base par conteneur (`PGDATABASE`)** : pas de liste, pas de boucle. Plusieurs bases = plusieurs conteneurs (un accessory par base).
 - **`list_dumps` échoue si `rclone lsf` échoue** : ne jamais prendre une erreur de listing pour "aucun dump".
 - **Le nettoyage des `.in_progress` est limité** à la base courante, au préfixe (`--max-depth 1`, filtre ancré) et à plus d'un jour : le bucket peut contenir d'autres objets. Il supprime le dump (sans `.ok`) avec son marqueur ; si le `.ok` existe (run tué entre le `.ok` et la suppression du marqueur), seul le marqueur part.
 - **`tini -g`** dans l'`ENTRYPOINT` : sans lui, `docker stop` met 10 s puis tue le conteneur en plein upload.

@@ -3,16 +3,16 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![CI](https://github.com/pmakerhq/pgdump-age/actions/workflows/image.yml/badge.svg)
 
-**A compressed, encrypted `pg_dump` of one or several PostgreSQL 18 databases, one file each on S3. Nothing written to disk.**
+**A compressed, encrypted `pg_dump` of a PostgreSQL 18 database, one file per backup on S3. Nothing written to disk.**
 
 ```
 pg_dump --format=custom --compress=zstd:5  |  age --recipient <public key>  |  rclone rcat  ->  mydb-20261007T033000Z.dump.age
 ```
 
-- One object per database and per backup, one dump per day at `BACKUP_AT` (UTC). Databases are dumped one after the other.
+- One object per backup, one dump per day at `BACKUP_AT` (UTC). One database per container: for several databases, run several containers.
 - Encrypted with [age](https://github.com/FiloSottile/age): the server holds the public key only, you keep the private one.
 - State files next to each dump: `<dump>.in_progress` while it runs (bytes sent so far, refreshed every `PROGRESS_EVERY` seconds), `<dump>.ok` once `pg_dump`, `age` and `rclone` all succeeded (size, duration). A dump without `.ok` is never listed, restored by `get latest` or counted by the retention. No rename, no server-side copy.
-- Keeps the last `KEEP` dumps of each database, prunes a database only after its own successful dump. A failing database does not stop the others (the run exits non-zero).
+- Keeps the last `KEEP` dumps, prunes only after a successful dump.
 - Restorable without this tool: `age -d` then `pg_restore`.
 
 ## 🚀 Quick start
@@ -36,7 +36,7 @@ Tables with row-level security need `ALTER ROLE backup BYPASSRLS`. `pg_hba.conf`
 
 ```sh
 docker run --rm --read-only --tmpfs /tmp:size=8m \
-  -e PGHOST=db.example.com -e PGUSER=backup -e PGPASSWORD='...' -e PGDATABASES=mydb \
+  -e PGHOST=db.example.com -e PGUSER=backup -e PGPASSWORD='...' -e PGDATABASE=mydb \
   -e AGE_RECIPIENT=age1... \
   -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=my-backups \
   -e S3_ACCESS_KEY_ID='...' -e S3_SECRET_ACCESS_KEY='...' \
@@ -59,7 +59,7 @@ accessories:
         PGHOST: 10.0.0.10
         PGPORT: "5432"
         PGUSER: backup
-        PGDATABASES: myapp_production   # comma-separated: myapp_production,myapp_analytics
+        PGDATABASE: myapp_production
         AGE_RECIPIENT: age1...        # public key, not a secret
         S3_ENDPOINT: https://s3.sbg.io.cloud.ovh.net
         S3_REGION: sbg
@@ -100,10 +100,10 @@ The `docker run` command rendered by Kamal 2.12 from this block was checked, but
 | Variable | Purpose |
 |---|---|
 | `PGHOST`, `PGUSER`, `PGPASSWORD` | Connection (`PGPORT` optional). Direct connection, no PgBouncer. The role must read every database |
-| `PGDATABASES` | Databases to dump, comma-separated (`app,analytics`). Names: `[A-Za-z0-9_-]` only, no duplicates |
+| `PGDATABASE` | Database to dump. Name: `[A-Za-z0-9_-]` only |
 | `AGE_RECIPIENT` | age public key (`age1...`) |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Destination. The region is required (OVH checks it in the signature). `S3_PREFIX` optional |
-| `KEEP` | Dumps to keep per database (default `3`) |
+| `KEEP` | Dumps to keep (default `3`) |
 | `BACKUP_AT` | Daily run time, `HH:MM` UTC (default `03:30`) |
 | `RUN_ON_START` | `1` dumps at container start. **Avoid it with a restart policy**: each restart takes a dump and pushes older ones out of `KEEP` |
 | `PG_COMPRESS` | `pg_dump` compression (default `zstd:5`) |
@@ -114,7 +114,7 @@ The `docker run` command rendered by Kamal 2.12 from this block was checked, but
 
 Without `S3_PREFIX`, the cleanup of abandoned uploads covers the whole bucket: use a dedicated bucket or a prefix.
 
-Commands: `schedule` (default), `once`, `list` (valid dumps only, `size;name`), `adopt` (see [Upgrading from v0.1.1](#upgrading-from-v011)), `get latest [database] > dump.age` (the database is required when `PGDATABASES` lists several). Logs are prefixed `INFO`, `WARN` or `ERROR` (messages in French, no accents): alert on `ERROR`.
+Commands: `schedule` (default), `once`, `list` (valid dumps only, `size;name`), `adopt` (see [Upgrading from v0.1.1](#upgrading-from-v011)), `get latest > dump.age`. Logs are prefixed `INFO`, `WARN` or `ERROR` (messages in French, no accents): alert on `ERROR`.
 
 ## 🔓 Restoring
 
@@ -132,7 +132,7 @@ v0.1.1 dumps have no `.ok` file, so `list`, `get` and the retention ignore them 
 docker run --rm ... ghcr.io/pmakerhq/pgdump-age:<new version> adopt     # same environment as for a dump
 ```
 
-`adopt` writes a `.ok` (with `legacy=1`) for every dump that has neither `.ok` nor `.in_progress`, and deletes the `.partial` files v0.1.1 may have left for the configured databases. With Kamal: `kamal accessory exec pg_backup --reuse "pgdump-age adopt"`.
+`adopt` writes a `.ok` (with `legacy=1`) for every dump that has neither `.ok` nor `.in_progress`, and deletes the `.partial` files v0.1.1 may have left. With Kamal: `kamal accessory exec pg_backup --reuse "pgdump-age adopt"`.
 
 ## ⚠️ Known limits
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pgdump-age : pg_dump (format custom, compresse) -> age -> un objet S3 par base, sans fichier local.
 #
-# Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest [base]> | adopt
+# Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest> | adopt
 #
 # `set -e` n'est PAS fiable ici : backup_once est appele sous `||` (schedule), ce qui desactive
 # set -e pour tout son corps. Chaque etape qui peut echouer est donc verifiee explicitement.
@@ -19,22 +19,15 @@ need() {
 }
 
 setup() {
-  need PGHOST PGUSER PGPASSWORD PGDATABASES AGE_RECIPIENT \
+  need PGHOST PGUSER PGPASSWORD PGDATABASE AGE_RECIPIENT \
        S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
   KEEP=${KEEP:-3}
   PG_COMPRESS=${PG_COMPRESS:-zstd:5}
   MULTIPART_MAX_AGE=${MULTIPART_MAX_AGE:-24h}
   PROGRESS_EVERY=${PROGRESS_EVERY:-30}
 
-  # PGDATABASES : noms separes par des virgules. Chaque base a ses dumps et sa retention.
-  local db seen=,
-  IFS=, read -ra DATABASES <<<"${PGDATABASES// /}"
-  [[ ${#DATABASES[@]} -gt 0 ]] || { fail "PGDATABASES est vide"; exit 2; }
-  for db in "${DATABASES[@]}"; do
-    [[ $db =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASES: seuls [A-Za-z0-9_-] sont acceptes (base '${db}')"; exit 2; }
-    [[ $seen != *",${db},"* ]]    || { fail "PGDATABASES: base en double ($db)"; exit 2; }
-    seen+="${db},"
-  done
+  # Une seule base par conteneur : plusieurs bases = plusieurs conteneurs.
+  [[ $PGDATABASE =~ ^[A-Za-z0-9_-]+$ ]]  || { fail "PGDATABASE: seuls [A-Za-z0-9_-] sont acceptes"; exit 2; }
   [[ $KEEP =~ ^[1-9][0-9]*$ ]]           || { fail "KEEP doit etre un entier >= 1"; exit 2; }
   [[ $PROGRESS_EVERY =~ ^[1-9][0-9]*$ ]] || { fail "PROGRESS_EVERY doit etre un entier >= 1 (secondes)"; exit 2; }
   [[ $AGE_RECIPIENT == age1* ]]          || { fail "AGE_RECIPIENT doit etre une cle publique age (age1...)"; exit 2; }
@@ -234,9 +227,9 @@ backup_db() {
 
 # Migration depuis v0.1.1 : ses dumps n'ont pas de .ok. Ecrit un .ok (legacy=1) pour chaque dump sans .ok
 # ni .in_progress (un run en cours a son marqueur : il n'est pas touche), puis supprime les .partial que
-# v0.1.1 a pu laisser. A lancer une fois, conteneur v0.1.1 arrete.
+# v0.1.1 a pu laisser pour PGDATABASE. A lancer une fois, conteneur v0.1.1 arrete.
 adopt_legacy() {
-  local lines n db
+  local lines n
   lines=$(rclone lsf --files-only --max-depth 1 "$DEST") || { fail "listing du bucket impossible"; return 1; }
   while IFS= read -r n; do
     [[ $n =~ ^[A-Za-z0-9_-]+-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || continue
@@ -247,23 +240,16 @@ adopt_legacy() {
       fail "adoption de ${n} impossible"; return 1
     fi
   done <<<"$lines"
-  for db in "${DATABASES[@]}"; do
-    rclone delete "$DEST" --max-depth 1 --include "/${db}-*.dump.age.partial" \
-      || warn "nettoyage des .partial impossible"
-  done
+  rclone delete "$DEST" --max-depth 1 --include "/${PGDATABASE}-*.dump.age.partial" \
+    || warn "nettoyage des .partial impossible"
 }
 
-# Une base en echec n'empeche pas les suivantes : le code de retour est non nul si l'une a echoue.
 backup_once() {
-  local db rc=0
   # Uploads multipart abandonnes (run tue pendant l'upload) : invisibles dans un listing d'objets
   # mais factures. Limite au prefixe de DEST ; MULTIPART_MAX_AGE protege un upload en cours.
   rclone backend cleanup "$DEST" -o "max-age=${MULTIPART_MAX_AGE}" >/dev/null \
     || warn "nettoyage des uploads multipart abandonnes impossible"
-  for db in "${DATABASES[@]}"; do
-    backup_db "$db" || rc=1
-  done
-  return "$rc"
+  backup_db "$PGDATABASE"
 }
 
 # Secondes avant la prochaine occurrence de HH:MM (UTC), avec un seul appel a date.
@@ -290,7 +276,7 @@ schedule() {
 }
 
 main() {
-  local cmd=${1:-schedule} listing name db st
+  local cmd=${1:-schedule} listing name st
   setup
   case "$cmd" in
     schedule) schedule ;;
@@ -298,12 +284,9 @@ main() {
     list)     list_valid ;;
     adopt)    adopt_legacy ;;
     get)
-      name=${2:?usage: pgdump-age get <nom|latest [base]>}
+      name=${2:?usage: pgdump-age get <nom|latest>}
       if [[ $name == latest ]]; then
-        db=${3:-}
-        if [[ -z $db && ${#DATABASES[@]} -eq 1 ]]; then db=${DATABASES[0]}; fi
-        [[ $db =~ ^[A-Za-z0-9_-]+$ ]] || { fail "plusieurs bases configurees : pgdump-age get latest <base>"; exit 2; }
-        listing=$(list_dumps "$db") || { fail "listing du bucket impossible"; exit 1; }
+        listing=$(list_dumps "$PGDATABASE") || { fail "listing du bucket impossible"; exit 1; }
         name=${listing%%$'\n'*}
       fi
       [[ -n $name ]] || { fail "aucun dump"; exit 1; }

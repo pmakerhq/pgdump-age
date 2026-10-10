@@ -29,12 +29,12 @@ chmod 644 "$KEY"
 PUB=$(sed -n 's/^# public key: //p' "$KEY")
 [[ $PUB == age1* ]] || die "cle age non generee"
 
-# Variables surchargeables par appel : PW, DB (liste PGDATABASES), KEEP, CHUNK ; XENV = options docker supplementaires.
+# Variables surchargeables par appel : PW, DB (PGDATABASE), KEEP, CHUNK ; XENV = options docker supplementaires.
 XENV=()
 ARGS=()
 build_args() {
   ARGS=(--network "$NET"
-    -e PGHOST=postgres -e PGUSER=backup -e PGPASSWORD="${PW:-backup-pw}" -e PGDATABASES="${DB:-app}"
+    -e PGHOST=postgres -e PGUSER=backup -e PGPASSWORD="${PW:-backup-pw}" -e PGDATABASE="${DB:-app}"
     -e AGE_RECIPIENT="$PUB" -e S3_ENDPOINT=http://s3:9090 -e S3_REGION=us-east-1 -e S3_BUCKET=backups
     -e S3_ACCESS_KEY_ID=test -e S3_SECRET_ACCESS_KEY=test-secret -e KEEP="${KEEP:-3}"
     -e RCLONE_S3_CHUNK_SIZE="${CHUNK:-32M}")
@@ -220,29 +220,13 @@ rows=$(psql_pg -d app_restore_big -Atc 'select count(*) from big')
 [[ $rows -eq 1500000 ]] || die "gros dump : attendu 1500000 lignes, obtenu $rows"
 ok "gros dump (${big} octets) en multipart, restaure (1500000 lignes)"
 
-# 12. Plusieurs bases : un dump par base, retention par base, une base en echec n'arrete pas les autres.
-psql_pg -d app2 -qc "CREATE TABLE items2 AS SELECT g AS id FROM generate_series(1, 100) g"
-if DB="app, nexiste_pas ,app2" run once >/dev/null 2>&1; then die "une base inexistante dans PGDATABASES aurait du faire echouer le run"; fi
-[[ $(run list | grep -c '^[0-9]*;app2-.*\.dump\.age$') -eq 1 ]] || die "app2 n'a pas ete dumpee malgre l'echec de la base precedente"
-run list | grep -q 'nexiste_pas' && die "un objet a ete publie pour une base inexistante"
-n_app=$(run list | grep -c ';app-.*\.dump\.age$')
-DB=app,app2 KEEP=1 run once >/dev/null
-[[ $(run list | grep -c ';app2-.*\.dump\.age$') -eq 1 && $(run list | grep -c ';app-.*\.dump\.age$') -eq 1 ]] \
-  || die "retention par base: attendu 1 dump de app et 1 de app2 (app avait $n_app dumps)"
-raw_now=$(raw)
-for b in app app2; do
-  [[ $(grep -c "^${b}-.*\.dump\.age$" <<<"$raw_now") -eq 1 && $(grep -c "^${b}-.*\.dump\.age\.ok$" <<<"$raw_now") -eq 1 ]] \
-    || die "retention KEEP=1 : $b doit laisser exactement 1 dump et 1 .ok dans le bucket : $raw_now"
+# 12. PGDATABASE invalide (liste, caracteres speciaux) : refuse avant tout acces au bucket.
+before=$(raw)
+for bad in "app,app2" "app;x" "app x"; do
+  if DB="$bad" run once >/dev/null 2>&1; then die "PGDATABASE='$bad' aurait du etre refuse"; fi
 done
-if DB=app,app2 run get latest >/dev/null 2>&1; then die "get latest sans base aurait du echouer avec deux bases"; fi
-run get latest app2 | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pgdump-age:test -d -i /key \
-  | docker run -i --rm --network "$NET" -e PGPASSWORD=postgres postgres:18 pg_restore -h postgres -U postgres -d app_restore --no-owner -t items2 \
-  || die "restauration de app2 en echec"
-[[ $(psql_pg -d app_restore -Atc 'select count(*) from items2') -eq 100 ]] || die "app2 : attendu 100 lignes"
-for bad in "app,app" "app,,app2" "app;x"; do
-  if DB="$bad" run once >/dev/null 2>&1; then die "PGDATABASES='$bad' aurait du etre refuse"; fi
-done
-ok "plusieurs bases : dump et retention par base, echec isole, get latest <base>, valeurs invalides refusees"
+[[ $(raw) == "$before" ]] || die "le bucket a change apres un PGDATABASE refuse"
+ok "PGDATABASE invalide refuse, bucket intact"
 
 # 13. Metadonnees : .in_progress rafraichi avec les octets envoyes pendant le dump, .ok complet a la fin.
 XENV=(-e RCLONE_BWLIMIT=6M -e PROGRESS_EVERY=2)
