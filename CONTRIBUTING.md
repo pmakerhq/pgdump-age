@@ -32,8 +32,7 @@ Maintainers only. Run the `/release` skill ([`.claude/skills/release/SKILL.md`](
 
 - Writing the dump to disk, even temporarily.
 - Symmetric encryption, or a private key in the image.
-- Backing up several databases in one container.
-- Publishing directly under the final name, without going through `.partial`.
+- Treating a dump as valid without its `.ok` file.
 - Deleting old dumps before a run has fully succeeded.
 
 If your need is on this list, another tool (restic, pgBackRest, WAL-G) is probably a better fit.

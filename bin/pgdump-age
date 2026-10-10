@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# pgdump-age : pg_dump (format custom, compresse) -> age -> un seul objet S3, sans fichier local.
+# pgdump-age : pg_dump (format custom, compresse) -> age -> un objet S3 par base, sans fichier local.
 #
-# Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest>
+# Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest [base]> | adopt
 #
 # `set -e` n'est PAS fiable ici : backup_once est appele sous `||` (schedule), ce qui desactive
 # set -e pour tout son corps. Chaque etape qui peut echouer est donc verifiee explicitement.
@@ -19,14 +19,24 @@ need() {
 }
 
 setup() {
-  need PGHOST PGUSER PGPASSWORD PGDATABASE AGE_RECIPIENT \
+  need PGHOST PGUSER PGPASSWORD PGDATABASES AGE_RECIPIENT \
        S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
   KEEP=${KEEP:-3}
   PG_COMPRESS=${PG_COMPRESS:-zstd:5}
   MULTIPART_MAX_AGE=${MULTIPART_MAX_AGE:-24h}
+  PROGRESS_EVERY=${PROGRESS_EVERY:-30}
 
-  [[ $PGDATABASE =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASE: seuls [A-Za-z0-9_-] sont acceptes"; exit 2; }
+  # PGDATABASES : noms separes par des virgules. Chaque base a ses dumps et sa retention.
+  local db seen=,
+  IFS=, read -ra DATABASES <<<"${PGDATABASES// /}"
+  [[ ${#DATABASES[@]} -gt 0 ]] || { fail "PGDATABASES est vide"; exit 2; }
+  for db in "${DATABASES[@]}"; do
+    [[ $db =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASES: seuls [A-Za-z0-9_-] sont acceptes (base '${db}')"; exit 2; }
+    [[ $seen != *",${db},"* ]]    || { fail "PGDATABASES: base en double ($db)"; exit 2; }
+    seen+="${db},"
+  done
   [[ $KEEP =~ ^[1-9][0-9]*$ ]]           || { fail "KEEP doit etre un entier >= 1"; exit 2; }
+  [[ $PROGRESS_EVERY =~ ^[1-9][0-9]*$ ]] || { fail "PROGRESS_EVERY doit etre un entier >= 1 (secondes)"; exit 2; }
   [[ $AGE_RECIPIENT == age1* ]]          || { fail "AGE_RECIPIENT doit etre une cle publique age (age1...)"; exit 2; }
 
   # Remote rclone "DEST" configure par l'environnement : aucun fichier de config.
@@ -48,20 +58,38 @@ setup() {
   DEST="DEST:${S3_BUCKET}${prefix:+/$prefix}"
 }
 
-# Dumps finalises de la base, du plus recent au plus ancien (hors .partial et objets etrangers).
+# Etat d'un dump = deux petits objets a cote de lui (cle=valeur, une ligne chacun) :
+#   <nom>.in_progress : ecrit avant le dump et rafraichi toutes les PROGRESS_EVERY secondes
+#                       (octets envoyes). Present sans .ok = run en cours, ou tue.
+#   <nom>.ok          : ecrit en dernier, seulement si pg_dump, age et rclone ont reussi.
+# Seul un dump qui a son .ok est un dump valide : list, get latest et la retention ignorent les autres.
+
+# Dumps valides, au format "taille;nom" de `rclone lsf --format sp` (dump avec son .ok uniquement).
 # Echoue si le listing echoue : l'appelant ne doit jamais prendre une erreur pour "aucun dump".
+list_valid() {
+  local lines names l n
+  lines=$(rclone lsf --format sp --files-only "$DEST") || return 1
+  names=$(sed 's/^[0-9]*;//' <<<"$lines")
+  while IFS= read -r l; do
+    n=${l#*;}
+    if [[ $n == *.dump.age ]] && grep -qxF "${n}.ok" <<<"$names"; then printf '%s\n' "$l"; fi
+  done <<<"$lines"
+}
+
+# Noms des dumps valides d'une base, du plus recent au plus ancien.
 list_dumps() {
-  local all
-  all=$(rclone lsf --files-only "$DEST") || return 1
-  grep -E "^${PGDATABASE}-[0-9]{8}T[0-9]{6}Z\.dump\.age$" <<<"$all" | sort -r || true
+  local db=$1 lines
+  lines=$(list_valid) || return 1
+  cut -d';' -f2 <<<"$lines" | grep -E "^${db}-[0-9]{8}T[0-9]{6}Z\.dump\.age$" | sort -r || true
 }
 
 # Ne supprime rien si le listing echoue, ou si un dump plus recent que le nouveau existe
 # (horloge en retard : le nouveau dump serait alors le premier supprime).
+# Le .ok part en premier : un dump sans .ok n'est plus valide, meme si sa suppression echoue.
 prune() {
-  local current=$1 listing f
+  local db=$1 current=$2 listing f
   local -a old
-  if ! listing=$(list_dumps); then warn "listing impossible : retention non appliquee"; return 1; fi
+  if ! listing=$(list_dumps "$db"); then warn "listing impossible : retention non appliquee"; return 1; fi
   if [[ -n $(awk -v n="$current" '$0 > n' <<<"$listing") ]]; then
     warn "un dump plus recent que ${current} existe (horloge en retard ?) : retention non appliquee"
     return 1
@@ -69,60 +97,173 @@ prune() {
   mapfile -t old < <(tail -n +"$((KEEP + 1))" <<<"$listing")
   for f in "${old[@]}"; do
     [[ -n $f ]] || continue
-    if rclone deletefile "$DEST/$f"; then log "supprime : $f"; else warn "suppression impossible : $f"; fi
+    if ! rclone deletefile "$DEST/$f.ok"; then warn "suppression impossible : $f.ok (dump conserve)"; continue; fi
+    if rclone deletefile "$DEST/$f"; then log "supprime : $f"; else warn "suppression impossible : $f (sans .ok, a nettoyer a la main)"; fi
   done
 }
 
-backup_once() {
-  local stamp name partial size
+# Ecrit un objet d'etat : $1 = nom, puis les lignes cle=valeur sur stdin.
+put_state() { rclone rcat "$DEST/$1"; }
+
+# Presence d'un objet a la racine du prefixe : 0 = present, 1 = absent, 2 = listing en echec.
+# Un listing en echec n'est jamais un "absent" : l'appelant ne supprime rien dans ce cas.
+# A appeler en `obj_state ... || st=$?` : set -e est actif en mode `once` et dans `get`.
+obj_state() {
+  local out
+  out=$(rclone lsf --files-only --max-depth 1 --include "/$1" "$DEST") || return 2
+  [[ -n $out ]]
+}
+
+# Supprime un dump et son marqueur .in_progress. Le marqueur ne part que si le dump est confirme
+# absent : sinon il resterait un dump sans .ok ni marqueur, que rien ne retrouverait.
+remove_dump() {
+  local name=$1 st=0
+  rclone deletefile "$DEST/$name" 2>/dev/null || true
+  obj_state "$name" || st=$?
+  if [[ $st -eq 1 ]]; then
+    rclone deletefile "$DEST/$name.in_progress" 2>/dev/null || true
+  else
+    warn "dump ${name} non supprime : marqueur conserve, nouvel essai au prochain run"
+  fi
+}
+
+# Objets .in_progress de cette base non rafraichis depuis plus d'un jour : run tue. Leur dump (sans .ok)
+# est supprime avec eux ; si le .ok existe (tue entre l'ecriture du .ok et la suppression du marqueur),
+# seul le marqueur part. Pas de recursion : un autre prefixe du bucket n'est jamais touche.
+clean_stale() {
+  local db=$1 stale m base st
+  if ! stale=$(rclone lsf --files-only --max-depth 1 --include "/${db}-*.dump.age.in_progress" --min-age 1d "$DEST"); then
+    warn "nettoyage des .in_progress impossible"; return 0
+  fi
+  while IFS= read -r m; do
+    # Le glob de rclone deborde sur les bases dont le nom commence par "<db>-" : meme regex que list_dumps.
+    [[ $m =~ ^${db}-[0-9]{8}T[0-9]{6}Z\.dump\.age\.in_progress$ ]] || continue
+    base=${m%.in_progress}
+    st=0; obj_state "${base}.ok" || st=$?
+    case $st in
+      0) rclone deletefile "$DEST/$m" || warn "suppression impossible : $m" ;;
+      1) remove_dump "$base" ;;
+      *) warn "listing impossible : ${base} laisse en place" ; continue ;;
+    esac
+    log "run interrompu nettoye : $base"
+  done <<<"$stale"
+}
+
+# Rafraichit le marqueur avec le nombre d'octets envoyes (stats de rclone rcat, via son serveur rc local).
+# Sur TERM la boucle finit l'ecriture en cours puis s'arrete : le parent attend (wait) cette fin avant
+# d'ecrire le .ok, sinon une ecriture tardive recreerait le .in_progress apres sa suppression.
+progress_loop() {
+  local name=$1 db=$2 started=$3 port=$4 b=0 nb stop= sp=
+  trap 'stop=1; [[ -z $sp ]] || kill "$sp" 2>/dev/null' TERM
+  while [[ -z $stop ]]; do
+    sleep "$PROGRESS_EVERY" & sp=$!
+    [[ -z $stop ]] || kill "$sp" 2>/dev/null
+    wait "$sp" || true
+    sp=
+    [[ -z $stop ]] || break
+    nb=$(rclone rc --url "http://127.0.0.1:${port}/" core/stats 2>/dev/null \
+         | sed -n 's/^[[:space:]]*"bytes":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -n1) || true
+    if [[ -n $nb ]]; then b=$nb; fi
+    printf 'db=%s\nname=%s\npghost=%s\nstarted=%s\nupdated=%s\nbytes=%s\n' \
+      "$db" "$name" "$PGHOST" "$started" "$(date -u +%FT%TZ)" "$b" \
+      | put_state "${name}.in_progress" || warn "progression non ecrite"
+  done
+}
+
+backup_db() {
+  local db=$1 stamp name started finished size progress_pid t0 port
   local -a status
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  name="${PGDATABASE}-${stamp}.dump.age"
-  partial="${name}.partial"
+  name="${db}-${stamp}.dump.age"
+  started=$(date -u +%FT%TZ)
+  t0=$SECONDS
+  # Serveur rc de rclone rcat : localhost seulement, port tire au hasard par run (deux runs simultanes,
+  # p. ex. `kamal accessory exec --reuse "pgdump-age once"` pendant le run planifie, ne se marchent pas dessus).
+  port=$((20000 + RANDOM % 20000))
 
-  # Objets .partial de cette base laisses par un run tue entre la fin de l'upload et le renommage
-  # (> 1 jour, pour ne pas toucher un upload en cours). Pas de recursion : un autre prefixe du
-  # bucket n'est jamais touche.
-  rclone delete "$DEST" --max-depth 1 --include "/${PGDATABASE}-*.dump.age.partial" --min-age 1d \
-    || warn "nettoyage des .partial impossible"
-  # Uploads multipart abandonnes (run tue pendant l'upload) : invisibles dans un listing d'objets
-  # mais factures. Limite au prefixe de DEST ; MULTIPART_MAX_AGE protege un upload en cours.
-  rclone backend cleanup "$DEST" -o "max-age=${MULTIPART_MAX_AGE}" >/dev/null \
-    || warn "nettoyage des uploads multipart abandonnes impossible"
+  clean_stale "$db"
 
-  log "dump de ${PGDATABASE}@${PGHOST} vers ${DEST}/${name}"
-  # Si pg_dump echoue en route, age et rclone terminent normalement le flux tronque : les TROIS
-  # statuts sont donc controles avant de publier. Le dump vit sous .partial jusque-la.
+  log "dump de ${db}@${PGHOST} vers ${DEST}/${name}"
+  if ! printf 'db=%s\nname=%s\npghost=%s\nstarted=%s\nupdated=%s\nbytes=0\n' \
+       "$db" "$name" "$PGHOST" "$started" "$started" | put_state "${name}.in_progress"; then
+    fail "marqueur ${name}.in_progress non ecrit : dump abandonne"
+    return 1
+  fi
+  progress_loop "$name" "$db" "$started" "$port" &
+  progress_pid=$!
+
+  # Le dump est ecrit sous son nom final, mais sans .ok il n'est pas valide. Si pg_dump echoue en
+  # route, age et rclone terminent normalement le flux tronque : les TROIS statuts sont donc
+  # controles avant d'ecrire le .ok.
   set +e
-  pg_dump --format=custom --compress="$PG_COMPRESS" --no-password \
+  pg_dump --format=custom --compress="$PG_COMPRESS" --no-password --dbname="$db" \
     | age --recipient "$AGE_RECIPIENT" \
-    | rclone rcat "${DEST}/${partial}"
+    | rclone rcat --rc --rc-addr "127.0.0.1:${port}" "${DEST}/${name}"
   status=("${PIPESTATUS[@]}")
   set -e
+  kill "$progress_pid" 2>/dev/null || true
+  wait "$progress_pid" 2>/dev/null || true
 
   if [[ "${status[*]}" != "0 0 0" ]]; then
-    fail "echec (pg_dump=${status[0]} age=${status[1]} rclone=${status[2]}) : partiel supprime, dumps existants intacts"
-    rclone deletefile "${DEST}/${partial}" 2>/dev/null || true
+    fail "echec (pg_dump=${status[0]} age=${status[1]} rclone=${status[2]}) : dump supprime, dumps existants intacts"
+    remove_dump "$name"
     return 1
   fi
 
-  if ! size=$(rclone lsf --format s --files-only --include "/${partial}" "$DEST"); then
-    fail "taille de ${partial} illisible : objet conserve pour inspection, non publie"
+  if ! size=$(rclone lsf --format s --files-only --include "/${name}" "$DEST"); then
+    fail "taille de ${name} illisible : dump laisse sans .ok (invisible, nettoye par un prochain run une fois son marqueur perime)"
     return 1
   fi
   size=${size%%$'\n'*}
   if [[ ! $size =~ ^[0-9]+$ || $size -eq 0 ]]; then
-    fail "objet partiel absent ou vide : dumps existants intacts"
-    rclone deletefile "${DEST}/${partial}" 2>/dev/null || true
+    fail "objet absent ou vide : dumps existants intacts"
+    remove_dump "$name"
     return 1
   fi
 
-  if ! rclone moveto "${DEST}/${partial}" "${DEST}/${name}"; then
-    fail "publication de ${name} impossible (moveto) : ${partial} conserve, dumps existants intacts"
+  finished=$(date -u +%FT%TZ)
+  if ! printf 'db=%s\nname=%s\npghost=%s\nstarted=%s\nfinished=%s\nduration_s=%s\nsize=%s\n' \
+       "$db" "$name" "$PGHOST" "$started" "$finished" "$((SECONDS - t0))" "$size" | put_state "${name}.ok"; then
+    fail "publication de ${name} impossible (.ok non ecrit) : dump laisse sans .ok, ignore par list, get latest et la retention, nettoye par un prochain run une fois son marqueur perime"
     return 1
   fi
+  rclone deletefile "$DEST/${name}.in_progress" || warn "suppression impossible : ${name}.in_progress"
   log "termine : ${name} (${size} octets)"
-  prune "$name" || true
+  prune "$db" "$name" || true
+}
+
+# Migration depuis v0.1.1 : ses dumps n'ont pas de .ok. Ecrit un .ok (legacy=1) pour chaque dump sans .ok
+# ni .in_progress (un run en cours a son marqueur : il n'est pas touche), puis supprime les .partial que
+# v0.1.1 a pu laisser. A lancer une fois, conteneur v0.1.1 arrete.
+adopt_legacy() {
+  local lines n db
+  lines=$(rclone lsf --files-only --max-depth 1 "$DEST") || { fail "listing du bucket impossible"; return 1; }
+  while IFS= read -r n; do
+    [[ $n =~ ^[A-Za-z0-9_-]+-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || continue
+    if grep -qxF "${n}.ok" <<<"$lines" || grep -qxF "${n}.in_progress" <<<"$lines"; then continue; fi
+    if printf 'name=%s\nlegacy=1\n' "$n" | put_state "${n}.ok"; then
+      log "adopte : $n"
+    else
+      fail "adoption de ${n} impossible"; return 1
+    fi
+  done <<<"$lines"
+  for db in "${DATABASES[@]}"; do
+    rclone delete "$DEST" --max-depth 1 --include "/${db}-*.dump.age.partial" \
+      || warn "nettoyage des .partial impossible"
+  done
+}
+
+# Une base en echec n'empeche pas les suivantes : le code de retour est non nul si l'une a echoue.
+backup_once() {
+  local db rc=0
+  # Uploads multipart abandonnes (run tue pendant l'upload) : invisibles dans un listing d'objets
+  # mais factures. Limite au prefixe de DEST ; MULTIPART_MAX_AGE protege un upload en cours.
+  rclone backend cleanup "$DEST" -o "max-age=${MULTIPART_MAX_AGE}" >/dev/null \
+    || warn "nettoyage des uploads multipart abandonnes impossible"
+  for db in "${DATABASES[@]}"; do
+    backup_db "$db" || rc=1
+  done
+  return "$rc"
 }
 
 # Secondes avant la prochaine occurrence de HH:MM (UTC), avec un seul appel a date.
@@ -149,22 +290,33 @@ schedule() {
 }
 
 main() {
-  local cmd=${1:-schedule} listing name
+  local cmd=${1:-schedule} listing name db st
   setup
   case "$cmd" in
     schedule) schedule ;;
     once)     backup_once ;;
-    list)     rclone lsf --format sp --files-only "$DEST" ;;
+    list)     list_valid ;;
+    adopt)    adopt_legacy ;;
     get)
-      name=${2:?usage: pgdump-age get <nom|latest>}
+      name=${2:?usage: pgdump-age get <nom|latest [base]>}
       if [[ $name == latest ]]; then
-        listing=$(list_dumps) || { fail "listing du bucket impossible"; exit 1; }
+        db=${3:-}
+        if [[ -z $db && ${#DATABASES[@]} -eq 1 ]]; then db=${DATABASES[0]}; fi
+        [[ $db =~ ^[A-Za-z0-9_-]+$ ]] || { fail "plusieurs bases configurees : pgdump-age get latest <base>"; exit 2; }
+        listing=$(list_dumps "$db") || { fail "listing du bucket impossible"; exit 1; }
         name=${listing%%$'\n'*}
       fi
       [[ -n $name ]] || { fail "aucun dump"; exit 1; }
+      [[ $name =~ ^[A-Za-z0-9_-]+-[0-9]{8}T[0-9]{6}Z\.dump\.age$ ]] || { fail "nom de dump invalide : $name"; exit 2; }
+      st=0; obj_state "${name}.ok" || st=$?
+      case $st in
+        0) ;;
+        1) fail "${name} n'a pas de .ok : dump invalide ou en cours"; exit 1 ;;
+        *) fail "listing du bucket impossible"; exit 1 ;;
+      esac
       rclone cat "$DEST/$name"
       ;;
-    *) fail "commande inconnue : $cmd (schedule|once|list|get)"; exit 2 ;;
+    *) fail "commande inconnue : $cmd (schedule|once|list|get|adopt)"; exit 2 ;;
   esac
 }
 

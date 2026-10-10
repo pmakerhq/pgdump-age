@@ -1,6 +1,6 @@
 name: S3 grand objet
 
-# Objet de 5 Gio (au-dessus du seuil de copie multipart de rclone, 4,6 Gio) contre SeaweedFS.
+# Objet de 5 Gio (upload multipart en flux, reglages par defaut de l'outil) contre SeaweedFS.
 # Lent et gourmand en disque : manuel, ou quand le script / ce workflow changent. Ne publie rien.
 on:
   workflow_dispatch:
