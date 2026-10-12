@@ -23,7 +23,7 @@ pg_dump --format=custom --compress=zstd:5  |  age --recipient <public key>  |  r
 age-keygen -o private-key.txt     # prints the public key age1...
 ```
 
-**2. Create a read-only role** (as superuser, on the database to back up):
+**2. Create a read-only role** (as superuser; roles are cluster-wide, so it covers every database you list):
 
 ```sql
 CREATE ROLE backup LOGIN PASSWORD 'CHANGE-ME';   -- no URL special characters (@ : / % # ?)
@@ -100,7 +100,8 @@ The `docker run` command rendered by Kamal 2.12 from this block was checked, but
 | Variable | Purpose |
 |---|---|
 | `PGHOST`, `PGUSER`, `PGPASSWORD` | Connection (`PGPORT` optional). Direct connection, no PgBouncer. The role must read every database |
-| `PGDATABASES` | Databases to dump, comma-separated (`app,analytics`). Names: `[A-Za-z0-9_-]` only, no duplicates. `PGDATABASE` (one name, as in v0.2.x) is read too and added to the list if absent |
+| `PGDATABASES` | Databases to dump, comma-separated (`app,analytics`). Names: `[A-Za-z0-9_-]` only, no duplicates. Spaces around commas are ignored |
+| `PGDATABASE` | One database, as in v0.2.x. Read together with `PGDATABASES` (added to the list if absent), so existing deployments keep working. At least one of the two is required |
 | `AGE_RECIPIENT` | age public key (`age1...`) |
 | `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Destination. The region is required (OVH checks it in the signature). `S3_PREFIX` optional |
 | `KEEP` | Dumps to keep per database (default `3`) |
