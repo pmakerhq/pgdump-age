@@ -3,8 +3,8 @@
 #
 # Commandes : schedule (defaut, quotidien a BACKUP_AT UTC) | once | list | get <nom|latest [base]> | adopt
 #
-# `set -e` n'est PAS fiable ici : backup_once est appele sous `||` (schedule), ce qui desactive
-# set -e pour tout son corps. Chaque etape qui peut echouer est donc verifiee explicitement.
+# `set -e` n'est PAS fiable ici : backup_db est appele sous `||` (backup_once, tous modes), ce qui
+# desactive set -e pour tout son corps. Chaque etape qui peut echouer est donc verifiee explicitement.
 set -euo pipefail
 
 log()  { printf '%s INFO  %s\n' "$(date -u +%FT%TZ)" "$*"; }
@@ -19,9 +19,8 @@ need() {
 }
 
 setup() {
-  # PGDATABASE (v0.2.x, une seule base) reste accepte quand PGDATABASES est absent.
-  PGDATABASES=${PGDATABASES:-${PGDATABASE:-}}
-  need PGHOST PGUSER PGPASSWORD PGDATABASES AGE_RECIPIENT \
+  PGDATABASES=${PGDATABASES:-}
+  need PGHOST PGUSER PGPASSWORD AGE_RECIPIENT \
        S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY
   KEEP=${KEEP:-3}
   PG_COMPRESS=${PG_COMPRESS:-zstd:5}
@@ -29,14 +28,29 @@ setup() {
   PROGRESS_EVERY=${PROGRESS_EVERY:-30}
 
   # PGDATABASES : noms separes par des virgules. Chaque base a ses dumps et sa retention.
-  local db seen=,
-  IFS=, read -ra DATABASES <<<"${PGDATABASES// /}"
-  [[ ${#DATABASES[@]} -gt 0 ]] || { fail "PGDATABASES est vide"; exit 2; }
+  # Caracteres verifies sur la chaine brute : `read` ne lit que la premiere ligne, une base apres un
+  # retour a la ligne serait ignoree sans erreur. Les espaces autour des virgules sont retires, pas ceux
+  # a l'interieur d'un nom (refuses plus bas).
+  local db i seen=,
+  DATABASES=()
+  if [[ -n $PGDATABASES ]]; then
+    [[ $PGDATABASES =~ ^[A-Za-z0-9_,\ -]+$ ]] || { fail "PGDATABASES: seuls [A-Za-z0-9_-] et la virgule sont acceptes"; exit 2; }
+    IFS=, read -ra DATABASES <<<"$PGDATABASES"
+    for i in "${!DATABASES[@]}"; do
+      db=${DATABASES[i]}; db=${db#"${db%%[! ]*}"}; DATABASES[i]=${db%"${db##*[! ]}"}
+    done
+  fi
   for db in "${DATABASES[@]}"; do
     [[ $db =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASES: seuls [A-Za-z0-9_-] sont acceptes (base '${db}')"; exit 2; }
     [[ $seen != *",${db},"* ]]    || { fail "PGDATABASES: base en double ($db)"; exit 2; }
     seen+="${db},"
   done
+  # PGDATABASE (v0.2.x) est lu aussi : ajoute a la liste s'il n'y figure pas deja.
+  if [[ -n ${PGDATABASE:-} ]]; then
+    [[ $PGDATABASE =~ ^[A-Za-z0-9_-]+$ ]] || { fail "PGDATABASE: seuls [A-Za-z0-9_-] sont acceptes"; exit 2; }
+    if [[ $seen != *",${PGDATABASE},"* ]]; then DATABASES+=("$PGDATABASE"); fi
+  fi
+  [[ ${#DATABASES[@]} -gt 0 ]] || { fail "variable PGDATABASES (ou PGDATABASE) manquante"; exit 2; }
   [[ $KEEP =~ ^[1-9][0-9]*$ ]]           || { fail "KEEP doit etre un entier >= 1"; exit 2; }
   [[ $PROGRESS_EVERY =~ ^[1-9][0-9]*$ ]] || { fail "PROGRESS_EVERY doit etre un entier >= 1 (secondes)"; exit 2; }
   [[ $AGE_RECIPIENT == age1* ]]          || { fail "AGE_RECIPIENT doit etre une cle publique age (age1...)"; exit 2; }

@@ -221,30 +221,34 @@ rows=$(psql_pg -d app_restore_big -Atc 'select count(*) from big')
 ok "gros dump (${big} octets) en multipart, restaure (1500000 lignes)"
 
 # 12. Plusieurs bases : un dump par base, retention par base, une base en echec n'arrete pas les autres.
-psql_pg -d app2 -qc "CREATE TABLE items2 AS SELECT g AS id FROM generate_series(1, 100) g"
-if DB="app, nexiste_pas ,app2" run once >/dev/null 2>&1; then die "une base inexistante dans PGDATABASES aurait du faire echouer le run"; fi
-[[ $(run list | grep -c '^[0-9]*;app2-.*\.dump\.age$') -eq 1 ]] || die "app2 n'a pas ete dumpee malgre l'echec de la base precedente"
+psql_pg -d app-v2 -qc "CREATE TABLE items2 AS SELECT g AS id FROM generate_series(1, 100) g"
+if DB="app, nexiste_pas ,app-v2" run once >/dev/null 2>&1; then die "une base inexistante dans PGDATABASES aurait du faire echouer le run"; fi
+[[ $(run list | grep -c '^[0-9]*;app-v2-.*\.dump\.age$') -eq 1 ]] || die "app-v2 n'a pas ete dumpee malgre l'echec de la base precedente"
 run list | grep -q 'nexiste_pas' && die "un objet a ete publie pour une base inexistante"
-n_app=$(run list | grep -c ';app-.*\.dump\.age$')
-DB=app,app2 KEEP=1 run once >/dev/null
-[[ $(run list | grep -c ';app2-.*\.dump\.age$') -eq 1 && $(run list | grep -c ';app-.*\.dump\.age$') -eq 1 ]] \
-  || die "retention par base: attendu 1 dump de app et 1 de app2 (app avait $n_app dumps)"
+n_app=$(run list | grep -c ';app-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age$')
+DB=app,app-v2 KEEP=1 run once >/dev/null
+[[ $(run list | grep -c ';app-v2-.*\.dump\.age$') -eq 1 && $(run list | grep -c ';app-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age$') -eq 1 ]] \
+  || die "retention par base: attendu 1 dump de app et 1 de app-v2 (app avait $n_app dumps)"
 raw_now=$(raw)
-for b in app app2; do
-  [[ $(grep -c "^${b}-.*\.dump\.age$" <<<"$raw_now") -eq 1 && $(grep -c "^${b}-.*\.dump\.age\.ok$" <<<"$raw_now") -eq 1 ]] \
+for b in app app-v2; do
+  [[ $(grep -c "^${b}-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age$" <<<"$raw_now") -eq 1 && $(grep -c "^${b}-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age\.ok$" <<<"$raw_now") -eq 1 ]] \
     || die "retention KEEP=1 : $b doit laisser exactement 1 dump et 1 .ok dans le bucket : $raw_now"
 done
-if DB=app,app2 run get latest >/dev/null 2>&1; then die "get latest sans base aurait du echouer avec deux bases"; fi
-run get latest app2 | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pgdump-age:test -d -i /key \
+if DB=app,app-v2 run get latest >/dev/null 2>&1; then die "get latest sans base aurait du echouer avec deux bases"; fi
+run get latest app-v2 | docker run -i --rm --entrypoint age -v "$KEY:/key:ro" pgdump-age:test -d -i /key \
   | docker run -i --rm --network "$NET" -e PGPASSWORD=postgres postgres:18 pg_restore -h postgres -U postgres -d app_restore --no-owner -t items2 \
-  || die "restauration de app2 en echec"
-[[ $(psql_pg -d app_restore -Atc 'select count(*) from items2') -eq 100 ]] || die "app2 : attendu 100 lignes"
-for bad in "app,app" "app,,app2" "app;x"; do
-  if DB="$bad" run once >/dev/null 2>&1; then die "PGDATABASES='$bad' aurait du etre refuse"; fi
+  || die "restauration de app-v2 en echec"
+[[ $(psql_pg -d app_restore -Atc 'select count(*) from items2') -eq 100 ]] || die "app-v2 : attendu 100 lignes"
+# Valeurs invalides : refus par setup (code 2) avant tout acces au bucket, jamais un echec "par hasard" de pg_dump.
+before=$(raw)
+for bad in "app,app" "app,,app-v2" "app;x" "app x" $'app\napp-v2'; do
+  rc=0; DB="$bad" run once >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 2 ]] || die "PGDATABASES='$bad' aurait du etre refuse (code 2), code obtenu : $rc"
 done
+[[ $(raw) == "$before" ]] || die "le bucket a change apres des PGDATABASES refuses"
 # Chaque base a son propre .ok (db=<base>) et plus aucun .in_progress ne traine.
-for b in app app2; do
-  okf=$(grep "^${b}-.*\.dump\.age\.ok$" <<<"$raw_now")
+for b in app app-v2; do
+  okf=$(grep "^${b}-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age\.ok$" <<<"$raw_now")
   grep -qx "db=${b}" <<<"$(rc cat "T:backups/$okf")" || die ".ok de $b sans db=$b"
 done
 grep -q '\.in_progress$' <<<"$raw_now" && die ".in_progress oublie apres un run multi-bases : $raw_now"
@@ -288,13 +292,25 @@ rc deletefile T:backups/app-20190101T000000Z.dump.age
 rc deletefile T:backups/app-20190101T000000Z.dump.age.ok
 ok "adopt : dump v0.1.1 adopte (legacy=1), .partial supprime ; get refuse un nom glob"
 
-# 15. Repli v0.2.x : PGDATABASE seul (PGDATABASES vide) donne toujours un dump de cette base.
-old=$(run list | grep ';app2-.*\.dump\.age$' | cut -d';' -f2)
-XENV=(-e PGDATABASE=app2)
+# 15. PGDATABASE (v0.2.x) est lu aussi : seul, il donne un dump de cette base ; avec PGDATABASES, il s'ajoute
+# a la liste (sans doublon s'il y figure deja) ; invalide, il est refuse (code 2).
+last() { run list | grep ";${1}-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age$" | cut -d';' -f2; }
+old2=$(last app-v2)
+XENV=(-e PGDATABASE=app-v2)
 DB= KEEP=1 run once >/dev/null || die "PGDATABASE seul : run en echec"
+[[ -n $(last app-v2) && $(last app-v2) != "$old2" ]] || die "PGDATABASE seul : pas de nouveau dump de app-v2"
+old=$(last app); old2=$(last app-v2)
+DB=app KEEP=1 run once >/dev/null || die "PGDATABASES=app + PGDATABASE=app-v2 : run en echec"
+[[ $(last app) != "$old" && $(last app-v2) != "$old2" ]] || die "PGDATABASES + PGDATABASE : les deux bases doivent etre dumpees"
+old=$(last app)
+XENV=(-e PGDATABASE=app)
+DB=app KEEP=1 run once >/dev/null || die "PGDATABASE deja dans PGDATABASES : run en echec"
+[[ $(run list | grep -c ';app-[0-9]\{8\}T[0-9]\{6\}Z\.dump\.age$') -eq 1 && $(last app) != "$old" ]] \
+  || die "PGDATABASE deja dans PGDATABASES : un seul dump de app attendu par run"
+XENV=(-e PGDATABASE=app,x)
+rc=0; DB= run once >/dev/null 2>&1 || rc=$?
 XENV=()
-new=$(run list | grep ';app2-.*\.dump\.age$' | cut -d';' -f2)
-[[ -n $new && $new != "$old" ]] || die "PGDATABASE seul n'a pas produit de nouveau dump de app2 (avant: $old, apres: $new)"
-ok "PGDATABASE seul reste accepte"
+[[ $rc -eq 2 ]] || die "PGDATABASE invalide aurait du etre refuse (code 2), obtenu $rc"
+ok "PGDATABASE lu avec ou sans PGDATABASES (ajout, sans doublon), invalide refuse"
 
 echo "tous les tests passent"
