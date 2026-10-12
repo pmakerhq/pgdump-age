@@ -40,7 +40,7 @@ docker run --rm --read-only --tmpfs /tmp:size=8m \
   -e AGE_RECIPIENT=age1... \
   -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=my-backups \
   -e S3_ACCESS_KEY_ID='...' -e S3_SECRET_ACCESS_KEY='...' \
-  ghcr.io/pmakerhq/pgdump-age:v0.1.1 once
+  ghcr.io/pmakerhq/pgdump-age:v0.2.1 once
 ```
 
 Replace `once` with `list` to check. With no command the container runs `schedule`.
@@ -52,7 +52,7 @@ In `config/deploy.yml`:
 ```yaml
 accessories:
   pg_backup:
-    image: ghcr.io/pmakerhq/pgdump-age:v0.1.1   # pin a version, never latest
+    image: ghcr.io/pmakerhq/pgdump-age:v0.2.1   # pin a version, never latest
     host: 10.0.0.10   # must reach Postgres directly, not through PgBouncer
     env:
       clear:
@@ -136,13 +136,16 @@ docker run --rm ... ghcr.io/pmakerhq/pgdump-age:<new version> adopt     # same e
 
 ## ⚠️ Known limits
 
-Tested against fake S3 servers, **not against OVH Object Storage**: `bash test/run.sh` (Docker required, about 2 minutes) and, in a separate CI job, a 5 GiB streamed multipart upload on SeaweedFS (`test/grand-objet.sh`). Check this before relying on it for a large database:
+Tested against fake S3 servers: `bash test/run.sh` (Docker required, about 2 minutes) and, in a separate CI job, a 5 GiB streamed multipart upload on SeaweedFS (`test/grand-objet.sh`). It has also run once against a real 117 GiB production database on OVH Object Storage: the 2.8 GiB object was decrypted to a file and restored with `pg_restore -j 4` without error, and `rclone backend list-multipart-uploads` works on OVH (empty list).
 
-1. **Cleanup of abandoned uploads** needs the provider to list in-progress uploads: `rclone backend list-multipart-uploads ovh:bucket`.
+Not verified on OVH:
+
+1. **Cleanup of abandoned uploads**: the listing works, but `rclone backend cleanup` has never removed a real abandoned upload.
+2. **Objects larger than 5 GiB**, and restoring through a pipe (`age -d | pg_restore`) instead of a file.
 
 Nothing is renamed or copied server-side: a dump is valid when its `.ok` file exists. A run killed mid-upload leaves its `.in_progress` file and no `.ok`; the first run that finds the marker unrefreshed for more than a day deletes it (and the dump, if any), so in practice the run after next. `get <name>` takes an exact dump name (no pattern) and refuses a dump without `.ok`. The progress and `.ok` files are plain `key=value` text.
 
-Also: no failure notification (watch `ERROR` logs and the exit code) and no real 121 GB dump measured.
+Also: no failure notification (watch `ERROR` logs and the exit code).
 
 ## 📦 Releases
 

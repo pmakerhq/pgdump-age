@@ -6,7 +6,7 @@ Image Docker + script bash qui sauvegarde **une base PostgreSQL 18 (`PGDATABASE`
 pg_dump --format=custom --compress=zstd:5 | age --recipient KEY | rclone rcat DEST/<base>-AAAAMMJJTHHMMSSZ.dump.age  +  <nom>.in_progress (progression)  ->  <nom>.ok (valide)
 ```
 
-Cible : un accessory Kamal (`docker run` avec variables d'environnement), staging d'abord, puis la prod (base d'environ 121 Go, dump de dizaines de Go en flux de taille inconnue). S3 = OVH Object Storage. Le README décrit la configuration et la restauration ; ce fichier fixe les règles de modification.
+Cible : un accessory Kamal (`docker run` avec variables d'environnement), staging d'abord, puis la prod (base d'environ 117 Gio, dump de 2,8 Gio mesuré en prod, en flux de taille inconnue). S3 = OVH Object Storage. Le README décrit la configuration et la restauration ; ce fichier fixe les règles de modification.
 
 ## Fichiers
 
@@ -49,7 +49,8 @@ Cible : un accessory Kamal (`docker run` avec variables d'environnement), stagin
 
 ## Non validé (ne pas affirmer le contraire)
 
-- **Aucun test contre OVH réel** : seulement contre un S3 factice (s3mock) et SeaweedFS (objet de 5 Gio). Un point est à vérifier avant la prod (détaillé dans le README) : OVH doit lister les uploads multipart en cours pour que `rclone backend cleanup` fonctionne. Le `moveto` et la copie multipart côté serveur ne sont plus utilisés depuis les fichiers d'état.
+- **OVH réel : validé une fois, pas en continu.** Un dump de la prod (117 Gio, objet de 2 991 049 635 octets) a été envoyé en multipart vers OVH, déchiffré en fichier puis restauré avec `pg_restore --no-owner -j 4` (code 0, 20 min 48 s, 0 erreur, 0 index invalide, 55 tables et 3 vues matérialisées peuplées). `rclone backend list-multipart-uploads` répond sans erreur sur les buckets de staging et de prod (liste vide). Le `moveto` et la copie multipart côté serveur ne sont plus utilisés depuis les fichiers d'état.
+- **Non testé sur OVH** : la suppression par `rclone backend cleanup` d'un vrai upload abandonné (la liste était vide), un objet de plus de 5 Gio, et la restauration en pipe `age -d | pg_restore` (la restauration a été faite depuis un fichier, `-j 4` l'impose).
 - `S3_PROVIDER=OVHcloud` existe dans rclone 1.72 mais n'a jamais été essayé.
-- Aucun dump de 121 Go n'a été fait ; le plafond de 312 Gio par objet (parts de 32 Mio, 10 000 parts) est un calcul confirmé par le message de rclone, pas une mesure.
+- Le plafond de 312 Gio par objet (parts de 32 Mio, 10 000 parts) est un calcul confirmé par le message de rclone, pas une mesure ; le dump de prod en est très loin.
 - Pas de notification d'échec : seuls le code de sortie et les logs `ERROR`.
