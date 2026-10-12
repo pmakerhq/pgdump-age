@@ -40,7 +40,7 @@ docker run --rm --read-only --tmpfs /tmp:size=8m \
   -e AGE_RECIPIENT=age1... \
   -e S3_ENDPOINT=https://s3.example.com -e S3_REGION=us-east-1 -e S3_BUCKET=my-backups \
   -e S3_ACCESS_KEY_ID='...' -e S3_SECRET_ACCESS_KEY='...' \
-  ghcr.io/pmakerhq/pgdump-age:v0.2.1 once
+  ghcr.io/pmakerhq/pgdump-age:v0.3.0 once
 ```
 
 Replace `once` with `list` to check. With no command the container runs `schedule`.
@@ -52,7 +52,7 @@ In `config/deploy.yml`:
 ```yaml
 accessories:
   pg_backup:
-    image: ghcr.io/pmakerhq/pgdump-age:v0.2.1   # pin a version, never latest
+    image: ghcr.io/pmakerhq/pgdump-age:v0.3.0   # pin a version, never latest
     host: 10.0.0.10   # must reach Postgres directly, not through PgBouncer
     env:
       clear:
